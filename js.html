@@ -1,0 +1,4136 @@
+<!-- js.html -->
+<script>
+var isAdmin = false;
+var currentUserRole = '';
+var currentUserEmail = '';
+var disableLoadingOverlay = false;
+var departments = [];
+var roles = [];
+var holidays = [];
+
+// Các biểu đồ
+var statusChart = null;
+var departmentChart = null;
+var monthlyChart = null;
+
+// Hàm lọc giá trị trùng lặp trong mảng
+function removeDuplicates(array) {
+  const seen = new Set();
+  return array.filter(item => {
+    const lowerItem = item.toLowerCase(); // Chuyển về chữ thường
+    if (item !== "" && !seen.has(lowerItem)) {
+      seen.add(lowerItem);
+      return true;
+    }
+    return false;
+  });
+}
+
+// Thêm hàm validation cho khoảng ngày
+function validateDateRange(startDate, endDate) {
+    if (!startDate || !endDate) return true;
+    
+    var start = new Date(startDate);
+    var end = new Date(endDate);
+    
+    return end >= start;
+}
+
+// Hàm hiển thị loading (chỉ dùng cho đăng nhập)
+function showLoading() {
+    if (!disableLoadingOverlay) {
+        $('#loadingOverlay').addClass('show');
+    }
+}
+
+// Hàm ẩn loading
+function hideLoading() {
+    $('#loadingOverlay').removeClass('show');
+}
+
+// Hàm flash thông báo thành công
+function showSuccessFlash(message, action) {
+    Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: message,
+        timer: 2000,
+        timerProgressBar: true,
+        showConfirmButton: false,
+        // Thêm tùy chọn để hiện ngay lập tức
+        willOpen: () => {
+            // Không có delay khi hiển thị
+            Swal.showLoading();
+            setTimeout(() => {
+                Swal.hideLoading();
+            }, 300);
+        }
+    });
+    
+    if (action && typeof action === 'function') {
+        // Giảm thời gian chờ trước khi thực hiện hành động tiếp theo
+        setTimeout(action, 100);
+    }
+}
+
+// Hàm định dạng ngày
+function formatDate(dateValue) {
+    if (!dateValue) return '';
+    
+    // Nếu là đối tượng Date
+    if (dateValue instanceof Date) {
+        var day = String(dateValue.getDate()).padStart(2, '0');
+        var month = String(dateValue.getMonth() + 1).padStart(2, '0');
+        var year = dateValue.getFullYear();
+        return `${day}/${month}/${year}`;
+    }
+    
+    // Nếu là chuỗi với định dạng ISO hoặc yyyy-MM-dd
+    if (typeof dateValue === 'string' && (dateValue.includes('T') || dateValue.includes('-'))) {
+        var date = new Date(dateValue);
+        if (!isNaN(date.getTime())) {
+            var day = String(date.getDate()).padStart(2, '0');
+            var month = String(date.getMonth() + 1).padStart(2, '0');
+            var year = date.getFullYear();
+            return `${day}/${month}/${year}`;
+        }
+    }
+    
+    // Giả định là đã ở định dạng dd/MM/yyyy
+    return dateValue;
+}
+
+// Hàm chuyển đổi định dạng ngày từ dd/MM/yyyy sang yyyy-MM-dd
+function convertDateFormat(dateValue) {
+    if (!dateValue) return '';
+    
+    // Nếu là đối tượng Date
+    if (dateValue instanceof Date) {
+        var year = dateValue.getFullYear();
+        var month = String(dateValue.getMonth() + 1).padStart(2, '0');
+        var day = String(dateValue.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    }
+    
+    // Kiểm tra nếu là định dạng dd/MM/yyyy
+    var regexDDMMYYYY = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
+    if (typeof dateValue === 'string') {
+        var matches = dateValue.match(regexDDMMYYYY);
+        
+        if (matches) {
+            var day = matches[1].padStart(2, '0');
+            var month = matches[2].padStart(2, '0');
+            var year = matches[3];
+            return `${year}-${month}-${day}`;
+        }
+    }
+    
+    // Thử chuyển đổi từ đối tượng Date (nếu dateValue là một ngày hợp lệ)
+    try {
+        var date = new Date(dateValue);
+        if (!isNaN(date.getTime())) {
+            var year = date.getFullYear();
+            var month = String(date.getMonth() + 1).padStart(2, '0');
+            var day = String(date.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+    } catch (e) {
+        console.error("Lỗi chuyển đổi định dạng ngày:", e);
+    }
+    
+    // Trả về giá trị gốc nếu không thể chuyển đổi
+    return dateValue;
+}
+
+// Tính số ngày giữa 2 ngày (không tính cuối tuần)
+function calculateBusinessDays(startDate, endDate) {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    
+    // Nếu ngày bắt đầu lớn hơn ngày kết thúc, return 0
+    if (start > end) return 0;
+    
+    // Tính tổng số ngày (kể cả cuối tuần)
+    const totalDays = Math.floor((end - start) / (1000 * 60 * 60 * 24)) + 1;
+    
+    // Tính số ngày cuối tuần
+    let weekendCount = 0;
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const day = d.getDay();
+        if (day === 0 || day === 6) { // 0 = Chủ nhật, 6 = Thứ 7
+            weekendCount++;
+        }
+    }
+    
+    // Tính số ngày làm việc
+    return totalDays - weekendCount;
+}
+
+function setActiveTab(tabId) {
+  // Xóa class active từ tất cả các tab
+  $('.sidebar-item').removeClass('active');
+  
+  // Thêm class active cho tab được chọn
+  $('#' + tabId).addClass('active');
+  
+  // Lưu tab active vào localStorage
+  localStorage.setItem('activeTab', tabId);
+}
+
+function checkLoginStatus() {
+  var savedUsername = localStorage.getItem('savedUsername');
+  var savedPassword = localStorage.getItem('savedPassword');
+  
+  if (savedUsername && savedPassword) {
+    // Hiển thị giao diện ngay lập tức, không đợi xác thực
+    $('#loginPage').hide();
+    $('.wrapper').show();
+    
+    // Ẩn tất cả các section content trước
+    $('.content-section').hide();
+    // Hiển thị dashboard mặc định
+    $('#dashboard').show();
+
+    // Thêm dòng này để đặt tab home là active
+    setActiveTab('homeTab');
+
+    if (!isAdmin) {
+        $('#userTab').hide();
+        // Đảm bảo ẩn nội dung tab người dùng
+        $('#userData').hide();
+    } else {
+        $('#userTab').show();
+    }
+    
+    // Phần code còn lại giữ nguyên
+    var cachedUserData = localStorage.getItem('userData');
+    if (cachedUserData) {
+      try {
+        var userData = JSON.parse(cachedUserData);
+        $('#user-name').text(userData.name);
+        $('#user-email').text(userData.email);
+        $('#user-department').text(userData.department);
+        $('#user-role').text(userData.role);
+        $('#user-pass').text(userData.password);
+        $('#user-id').text(userData.id);
+        currentUserEmail = userData.email;
+        isAdmin = userData.role === 'Admin';
+        currentUserRole = isAdmin ? 'admin' : 'user';
+        
+        if (userData.image) $('#userAvatar').attr('src', userData.image);
+        updateContainerVisibility(currentUserRole);
+        
+        // Load dữ liệu ngay
+        loadAllData();
+      } catch (e) {
+        console.error("Lỗi cache:", e);
+      }
+    }
+    
+    // Xác thực ngầm (không block UI)
+    google.script.run
+      .withSuccessHandler(function(loginType) {
+        if (loginType === 'user' || loginType === 'admin') {
+          google.script.run.withSuccessHandler(function(data) {
+            // Cập nhật cache
+            localStorage.setItem('userData', JSON.stringify(data));
+          }).getUserByUsername(savedUsername);
+        }
+      })
+      .validateLogin(savedUsername, savedPassword);
+  } else {
+    // Không có thông tin đăng nhập
+    $('.wrapper').hide();
+    $('#loginPage').show();
+  }
+}
+
+// Khi trang tải xong, kiểm tra tab active từ localStorage
+$(document).ready(function() {
+  // Tắt hiệu ứng loading khi chuyển tab
+  disableLoadingOverlay = true;
+  // Kiểm tra đăng nhập (đặt lên đầu tiên)
+  checkLoginStatus();
+  // Khởi tạo Select2 và các sự kiện khác
+  initSelect2();
+
+  checkLoginStatus();
+  var activeTab = localStorage.getItem('activeTab') || 'homeTab';
+  $('#' + activeTab).addClass('active');
+  
+  // Thêm sự kiện cho loại nghỉ
+  $('#leaveType').change(function() {
+    handleLeaveTypeChange();
+  });
+  
+  // Thêm sự kiện cho loại nghỉ trong form sửa
+  $('#editLeaveType').change(function() {
+    handleEditLeaveTypeChange();
+  });
+  
+  // Sự kiện tính toán số ngày nghỉ
+  $('#startDate, #leaveSession, #startDateRange, #endDate').on('change', function() {
+    calculateAndDisplayLeaveDays();
+  });
+  
+  // Sự kiện tính toán số ngày nghỉ trong form sửa
+  $('#editStartDate, #editLeaveSession, #editStartDateRange, #editEndDate').on('change', function() {
+    calculateAndDisplayEditLeaveDays();
+  });
+  
+  // Cập nhật UI khi thay đổi tab
+  $('.sidebar-link').click(function() {
+    var tabId = $(this).parent().attr('id');
+    setActiveTab(tabId);
+  });
+
+    // Thêm sự kiện khi modal edit user đóng
+  // $('#editUserModal').on('hidden.bs.modal', function() {
+  //     // Cập nhật thông tin phép năm sau khi đóng modal
+  //     forceUpdateLeaveBalance();
+  // });
+  
+  // Thêm sự kiện cho nút Cập nhật trong form chỉnh sửa
+  $(document).on('click', 'button.update-user-btn', function() {
+      $('#editUserForm').submit();
+  });
+});
+
+// Xử lý hiển thị tùy theo loại nghỉ
+function handleLeaveTypeChange() {
+  var leaveType = $('#leaveType').val();
+  
+  if (leaveType === 'Trong ngày') {
+    $('#singleDaySection').show();
+    $('#dateRangeSection').hide();
+    
+    // Reset và ẩn section tính ngày
+    $('#leaveDaysCalculated').show();
+    calculateAndDisplayLeaveDays();
+  } 
+  else if (leaveType === 'Từ ngày đến ngày') {
+    $('#singleDaySection').hide();
+    $('#dateRangeSection').show();
+    
+    // Hiển thị section tính ngày
+    $('#leaveDaysCalculated').show();
+    calculateAndDisplayLeaveDays();
+  }
+  else {
+    $('#singleDaySection').hide();
+    $('#dateRangeSection').hide();
+    $('#leaveDaysCalculated').hide();
+  }
+}
+
+// Xử lý hiển thị tùy theo loại nghỉ trong form sửa
+function handleEditLeaveTypeChange() {
+  var leaveType = $('#editLeaveType').val();
+  
+  // Bỏ thuộc tính required cho tất cả các trường ngày trước
+  $('#editStartDate').prop('required', false);
+  $('#editStartDateRange').prop('required', false);
+  $('#editEndDate').prop('required', false);
+  
+  if (leaveType === 'Trong ngày') {
+    $('#editSingleDaySection').show();
+    $('#editDateRangeSection').hide();
+    
+    // Thêm required vào trường ngày cho loại Trong ngày
+    $('#editStartDate').prop('required', true);
+    
+    // Reset và hiển thị section tính ngày
+    $('#editLeaveDaysCalculated').show();
+    calculateAndDisplayEditLeaveDays();
+  } 
+  else if (leaveType === 'Từ ngày đến ngày') {
+    $('#editSingleDaySection').hide();
+    $('#editDateRangeSection').show();
+    
+    // Thêm required vào các trường ngày cho loại Từ ngày đến ngày
+    $('#editStartDateRange').prop('required', true);
+    $('#editEndDate').prop('required', true);
+    
+    // Hiển thị section tính ngày
+    $('#editLeaveDaysCalculated').show();
+    calculateAndDisplayEditLeaveDays();
+  }
+  else {
+    $('#editSingleDaySection').hide();
+    $('#editDateRangeSection').hide();
+    $('#editLeaveDaysCalculated').hide();
+  }
+}
+
+// Tính toán và hiển thị số ngày nghỉ
+function calculateAndDisplayLeaveDays() {
+  var leaveType = $('#leaveType').val();
+  var days = 0;
+  
+  if (leaveType === 'Trong ngày') {
+    var leaveSession = $('#leaveSession').val();
+    if (leaveSession === 'Cả ngày') {
+      days = 1;
+    } else if (leaveSession === 'Buổi sáng' || leaveSession === 'Buổi chiều') {
+      days = 0.5;
+    }
+  } 
+  else if (leaveType === 'Từ ngày đến ngày') {
+    var startDate = $('#startDateRange').val();
+    var endDate = $('#endDate').val();
+    
+    if (startDate && endDate) {
+      days = calculateBusinessDaysExcludingHolidays(startDate, endDate);
+    }
+  }
+  
+  // Kiểm tra phép còn lại
+  var remainingLeave = parseFloat($('#modalRemainingLeave').text());
+  var leaveDaysElement = $('#leaveDaysCalculated');
+  var calculatedDaysElement = $('#calculatedDays');
+  
+  calculatedDaysElement.text(days);
+  
+  if (days > remainingLeave) {
+    leaveDaysElement.find('.leave-days-badge').removeClass('success').addClass('danger');
+  } else {
+    leaveDaysElement.find('.leave-days-badge').removeClass('danger').addClass('success');
+  }
+}
+
+// Tính toán và hiển thị số ngày nghỉ trong form sửa
+function calculateAndDisplayEditLeaveDays() {
+  var leaveType = $('#editLeaveType').val();
+  var days = 0;
+  
+  if (leaveType === 'Trong ngày') {
+    var leaveSession = $('#editLeaveSession').val();
+    if (leaveSession === 'Cả ngày') {
+      days = 1;
+    } else if (leaveSession === 'Buổi sáng' || leaveSession === 'Buổi chiều') {
+      days = 0.5;
+    }
+  } 
+  else if (leaveType === 'Từ ngày đến ngày') {
+    var startDate = $('#editStartDateRange').val();
+    var endDate = $('#editEndDate').val();
+    
+    if (startDate && endDate) {
+      days = calculateBusinessDaysExcludingHolidays(startDate, endDate);
+    }
+  }
+  
+  // Kiểm tra phép còn lại
+  var remainingLeave = parseFloat($('#editModalRemainingLeave').text());
+  var leaveDaysElement = $('#editLeaveDaysCalculated');
+  var calculatedDaysElement = $('#editCalculatedDays');
+  
+  calculatedDaysElement.text(days);
+  
+  if (days > remainingLeave) {
+    leaveDaysElement.find('.leave-days-badge').removeClass('success').addClass('danger');
+  } else {
+    leaveDaysElement.find('.leave-days-badge').removeClass('danger').addClass('success');
+  }
+}
+
+// Tính số ngày làm việc bỏ qua ngày nghỉ lễ
+function calculateBusinessDaysExcludingHolidays(startDate, endDate) {
+    // Kiểm tra nếu ngày kết thúc nhỏ hơn ngày bắt đầu
+    var start = new Date(startDate);
+    var end = new Date(endDate);
+    
+    if (end < start) {
+        return 0; // Trả về 0 ngày nếu khoảng thời gian không hợp lệ
+    }
+    
+    // Tính số ngày làm việc (không tính cuối tuần)
+    var businessDays = calculateBusinessDays(startDate, endDate);
+    
+    // Lấy danh sách ngày nghỉ lễ
+    var holidayList = holidays.map(holiday => {
+        if (typeof holiday === 'string') {
+            // Xử lý định dạng dd/MM/yyyy và chuyển thành đối tượng Date
+            var parts = holiday.split('/');
+            if (parts.length === 3) {
+                // Chú ý: JS tháng bắt đầu từ 0, nên phải trừ 1
+                return new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+            }
+            return new Date(holiday);
+        }
+        return holiday;
+    });
+    
+    // Lọc các ngày nghỉ lễ nằm trong khoảng thời gian và không rơi vào cuối tuần
+    var holidaysInRange = 0;
+    
+    for (var i = 0; i < holidayList.length; i++) {
+        var holiday = holidayList[i];
+        
+        // Đảm bảo holiday là đối tượng Date
+        if (!(holiday instanceof Date)) {
+            try {
+                holiday = new Date(holiday);
+            } catch (e) {
+                console.error("Không thể chuyển đổi ngày lễ:", holiday);
+                continue;
+            }
+        }
+        
+        // Đặt giờ về 00:00:00 để so sánh chính xác theo ngày
+        holiday.setHours(0, 0, 0, 0);
+        
+        // Kiểm tra ngày lễ có nằm trong khoảng không
+        if (holiday >= start && holiday <= end) {
+            // Kiểm tra nếu ngày lễ không rơi vào cuối tuần
+            var day = holiday.getDay();
+            if (day !== 0 && day !== 6) {
+                holidaysInRange++;
+                console.log("Ngày lễ trong khoảng:", holiday.toLocaleDateString(), "- Trừ 1 ngày làm việc");
+            }
+        }
+    }
+    
+    // Trừ đi số ngày nghỉ lễ
+    return Math.max(0, businessDays - holidaysInRange);
+}
+
+$(document).ready(function () {
+    // Khởi tạo Select2 cho dropdown
+    initSelect2();
+    
+    // Tắt hiệu ứng loading khi chuyển đổi giữa các tab
+    disableLoadingOverlay = true;
+    
+    // Kiểm tra xem có thông tin đăng nhập được lưu không
+    checkSavedLogin();
+    
+    $('#loginForm').submit(function(event) {
+        event.preventDefault();
+        var username = $('#username').val();
+        var password = $('#password').val();
+        var rememberMe = $('#rememberMe').is(':checked');
+
+        if (!username || !password) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Lỗi',
+                text: 'Vui lòng nhập tên đăng nhập và mật khẩu!'
+            });
+            return;
+        }
+        
+        var submitButton = $(this).find('button[type="submit"]');
+        submitButton.prop('disabled', true);
+        submitButton.html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Đang tải...');
+        disableLoadingOverlay = false;
+        showLoading();
+
+        google.script.run.withSuccessHandler(function(loginType) {
+            hideLoading();
+            if (loginType === 'user' || loginType === 'admin') {
+                isAdmin = loginType === 'admin';
+                currentUserRole = loginType;
+                
+                google.script.run.withSuccessHandler(function(data) {
+                    $('#user-name').text(data.name);
+                    $('#user-email').text(data.email);
+                    $('#user-department').text(data.department);
+                    $('#user-role').text(data.role);
+                    $('#user-pass').text(data.password);
+                    $('#user-id').text(data.id);
+                    currentUserEmail = data.email;
+
+                    isAdmin = data.role === 'Admin';
+                    currentUserRole = isAdmin ? 'admin' : 'user';
+                    
+                    // Hiển thị thông tin người phê duyệt nếu không phải admin
+                    if (!isAdmin && data.approverEmail) {
+                        // Lấy tên người phê duyệt từ email
+                        fetchApproverName(data.approverEmail);
+                        $('#user-approver-info').show();
+                    } else {
+                        $('#user-approver-info').hide();
+                    }
+                    
+                    if (data.image) $('#userAvatar').attr('src', data.image);
+                    updateContainerVisibility(currentUserRole);
+                    
+                    if (!isAdmin) {
+                        $('#userTab').hide();
+                    } else {
+                        $('#userTab').show();
+                    }
+                    
+                    // Cập nhật avatar nếu có
+                    if (data.image && data.image.length > 5) {
+                        $('#userAvatar').attr('src', data.image);
+                    }
+                    
+                    updateContainerVisibility(loginType);
+                    
+                    // Lưu thông tin đăng nhập nếu người dùng chọn "Nhớ đăng nhập"
+                    if (rememberMe) {
+                        localStorage.setItem('savedUsername', username);
+                        localStorage.setItem('savedPassword', password);
+                        localStorage.setItem('rememberMe', 'true');
+                    } else {
+                        localStorage.removeItem('savedUsername');
+                        localStorage.removeItem('savedPassword');
+                        localStorage.removeItem('rememberMe');
+                    }
+                    
+                    // Lưu cache thông tin người dùng
+                    localStorage.setItem('userData', JSON.stringify(data));
+
+                    Swal.fire({
+                        icon: 'success',
+                        title: 'Đăng nhập thành công!',
+                        text: 'Xin chào, ' + data.name + '!'
+                    }).then((result) => {
+                        $('#loginPage').hide();
+                        $('.wrapper').show();
+                        // Load các dữ liệu không hiển thị loading
+                        disableLoadingOverlay = true;
+                        loadAllData();
+                    });
+                }).getUserByUsername(username);
+            } else {
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Đăng nhập thất bại!',
+                    text: 'Email hoặc mật khẩu không đúng.'
+                });
+                submitButton.prop('disabled', false);
+                submitButton.html('Đăng Nhập');
+            }
+        }).withFailureHandler(function(error) {
+            hideLoading();
+            Swal.fire({
+                icon: 'error',
+                title: 'Lỗi!',
+                text: 'Không thể xác thực. Vui lòng thử lại sau.'
+            });
+            submitButton.prop('disabled', false);
+            submitButton.html('Đăng Nhập');
+        }).validateLogin(username, password);
+    });
+
+  function fetchApproverName(approverEmail) {
+    google.script.run
+        .withSuccessHandler(function(approverData) {
+            if (approverData) {
+                $('#user-approver-name').text(approverData.name);
+            } else {
+                $('#user-approver-name').text(approverEmail);
+            }
+        })
+        .getUserByUsername(approverEmail);
+  }
+
+    function checkSavedLogin() {
+        var savedUsername = localStorage.getItem('savedUsername');
+        var savedPassword = localStorage.getItem('savedPassword');
+        var rememberMe = localStorage.getItem('rememberMe');
+        
+        if (savedUsername && savedPassword && rememberMe === 'true') {
+            $('#username').val(savedUsername);
+            $('#password').val(savedPassword);
+            $('#rememberMe').prop('checked', true);
+            
+            // Tự động đăng nhập
+            disableLoadingOverlay = false;
+            showLoading();
+            google.script.run
+                .withSuccessHandler(function(loginType) {
+                    if (loginType === 'user' || loginType === 'admin') {
+                        isAdmin = loginType === 'admin';
+                        currentUserRole = loginType;
+                        
+                        google.script.run.withSuccessHandler(function(data) {
+                            hideLoading();
+                            $('#user-name').text(data.name);
+                            $('#user-email').text(data.email);
+                            $('#user-department').text(data.department);
+                            $('#user-role').text(data.role);
+                            $('#user-pass').text(data.password);
+                            $('#user-id').text(data.id);
+                            currentUserEmail = data.email;
+
+                              isAdmin = data.role === 'Admin';
+                              currentUserRole = isAdmin ? 'admin' : 'user';
+                              
+                              // Hiển thị thông tin người phê duyệt nếu không phải admin
+                              if (!isAdmin && data.approverEmail) {
+                                  // Lấy tên người phê duyệt từ email
+                                  fetchApproverName(data.approverEmail);
+                                  $('#user-approver-info').show();
+                              } else {
+                                  $('#user-approver-info').hide();
+                              }
+                              
+                              if (data.image) $('#userAvatar').attr('src', data.image);
+                              updateContainerVisibility(currentUserRole);
+                            
+                            // Cập nhật avatar nếu có
+                            if (data.image && data.image.length > 5) {
+                                $('#userAvatar').attr('src', data.image);
+                            }
+                            
+                            updateContainerVisibility(loginType);
+                            
+                            $('#loginPage').hide();
+                            $('.wrapper').show();
+                            
+                            // Không hiển thị loading khi load dữ liệu
+                            disableLoadingOverlay = true;
+                            loadAllData();
+                        }).getUserByUsername(savedUsername);
+                    } else {
+                        hideLoading();
+                    }
+                })
+                .withFailureHandler(function(error) {
+                    console.error('Lỗi đăng nhập tự động:', error);
+                    hideLoading();
+                })
+                .validateLogin(savedUsername, savedPassword);
+        }
+    }
+
+    // Thêm vào hàm updateContainerVisibility
+    function updateContainerVisibility(loginType) {
+        if (loginType === 'admin') {
+            $('#statusContainer').show();
+            $('#noteContainer').show();
+            $('#userData').show();
+            
+            // Hiển thị tab Người dùng trong menu
+            $('#userTab').show();
+        } else {
+            $('#statusContainer').hide();
+            $('#noteContainer').hide();
+            $('#userData').hide();
+            
+            // Ẩn tab Người dùng trong menu
+            $('#userTab').hide();
+        }
+        
+        // Hiển thị thông tin ngày phép ở sidebar
+        $('#sidebarLeaveInfo').show();
+        updateLeaveBalanceDisplay();
+        loadApproverRelationships();
+    }
+
+    $('#logoutLink').click(function (event) {
+        event.preventDefault();
+        Swal.fire({
+            title: 'Đăng xuất',
+            text: 'Bạn có chắc chắn muốn đăng xuất không?',
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#3085d6',
+            cancelButtonColor: '#d33',
+            confirmButtonText: 'Đồng ý',
+            cancelButtonText: 'Huỷ'
+        }).then((result) => {
+            if (result.isConfirmed) {
+                // Giữ lại thông tin đăng nhập nếu đã chọn "Nhớ đăng nhập"
+                if (!$('#rememberMe').is(':checked')) {
+                    localStorage.removeItem('savedUsername');
+                    localStorage.removeItem('savedPassword');
+                    localStorage.removeItem('rememberMe');
+                }
+                
+                $('.wrapper').hide();
+                $('#loginPage').show();
+                $('#loginForm button[type="submit"]').html('Đăng Nhập').prop('disabled', false);
+                isAdmin = false;
+                currentUserRole = '';
+                currentUserEmail = '';
+            }
+        });
+    });
+
+// Hàm cập nhật và hiển thị số phép còn lại
+function updateLeaveBalanceDisplay() {
+  var email = $('#user-email').text();
+  if (!email) return;
+  
+  google.script.run
+    .withSuccessHandler(function(leaveBalance) {
+      // Cập nhật phép năm nay
+      $('#leaveTotalLeave').text(leaveBalance.total);
+      $('#leaveDaysRemaining').text(leaveBalance.remainingCurrentYear);
+      $('#leaveCurrentYearUsed').text(leaveBalance.used);
+      
+      // Cập nhật phép năm trước nếu có - BẮT BUỘC HIỂN THỊ nếu người dùng có phép năm trước
+      if (leaveBalance.previousYear > 0) {
+        $('#previousYearLeaveSection').show();
+        $('#leaveDaysRemainingPrevious').text(leaveBalance.remainingPreviousYear);
+        $('#leavePreviousYearTotal').text(leaveBalance.previousYear);
+        
+        // Thêm thông báo về trạng thái sử dụng
+      if (leaveBalance.canUsePreviousYear) {
+        $('#previousYearExpiryNotice').text('Sử dụng đến hết ' + leaveBalance.previousYearExpiry);
+        $('#previousYearExpiryNotice').removeClass('text-danger').addClass('text-warning');
+      } else {
+        $('#previousYearExpiryNotice').html('Hạn sử dụng: <strong>' + leaveBalance.previousYearExpiry + '</strong>');
+        $('#previousYearExpiryNotice').removeClass('text-warning').addClass('text-info');
+      }
+      } else {
+        $('#previousYearLeaveSection').hide();
+      }
+      
+      // Cập nhật tổng số ngày đã dùng và còn lại
+      $('#leaveDaysUsed').text(leaveBalance.used + leaveBalance.usedPreviousYear);
+      $('#leaveDaysRemainingTotal').text(leaveBalance.remaining);
+      
+      // Cập nhật thanh progress
+      var totalLeaveAllowed = leaveBalance.total + (leaveBalance.canUsePreviousYear ? leaveBalance.previousYear : 0);
+      var totalLeaveUsed = leaveBalance.used + leaveBalance.usedPreviousYear;
+      var percentage = Math.min(100, Math.round((totalLeaveUsed / totalLeaveAllowed) * 100));
+      $('#leaveProgressBar').css('width', percentage + '%');
+      
+      // Áp dụng hiệu ứng highlight cho các giá trị vừa cập nhật
+      $('.leave-summary-value, .leave-card-value span').addClass('text-glow');
+      setTimeout(function() {
+        $('.leave-summary-value, .leave-card-value span').removeClass('text-glow');
+      }, 2000);
+      
+      // Lưu thông tin để sử dụng trong các form
+      sessionStorage.setItem('leaveBalance', JSON.stringify(leaveBalance));
+    })
+    .calculateLeaveBalance(email);
+}
+
+    // Sự kiện submit form thêm đơn nghỉ phép
+$('#addLeaveForm').submit(function (event) {
+    event.preventDefault();
+    // Kiểm tra khi chọn loại nghỉ "Từ ngày đến ngày"
+    if ($('#leaveType').val() === 'Từ ngày đến ngày') {
+        var startDate = $('#startDateRange').val();
+        var endDate = $('#endDate').val();
+        
+        if (!validateDateRange(startDate, endDate)) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Ngày không hợp lệ',
+                text: 'Ngày kết thúc không thể sớm hơn ngày bắt đầu!'
+            });
+            return;
+        }
+    }
+
+    var formElement = this;
+    
+    // Kiểm tra các trường bắt buộc
+    if (!formElement.checkValidity()) {
+        formElement.reportValidity();
+        return;
+    }
+    
+    // Kiểm tra tệp đính kèm
+    var fileInput = document.getElementById('fileInput');
+    var hasFile = fileInput && fileInput.files && fileInput.files.length > 0;
+    
+    // Kiểm tra loại tệp nếu có tệp được chọn
+    if (hasFile) {
+        var fileType = fileInput.files[0].type;
+        var isValidType = fileType.startsWith('application/pdf') || 
+                          fileType.startsWith('image/') ||
+                          fileType.includes('word') ||
+                          fileType.includes('excel') ||
+                          fileType.includes('spreadsheet');
+        
+        if (!isValidType) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Loại tệp không hợp lệ',
+                text: 'Chỉ chấp nhận PDF, hình ảnh, Word và Excel.'
+            });
+            return;
+        }
+    }
+    
+    // Kiểm tra số ngày nghỉ so với số phép còn lại
+    var leaveType = $('#leaveType').val();
+    var leaveDays;
+    
+    if (leaveType === 'Trong ngày') {
+        var leaveSession = $('#leaveSession').val();
+        leaveDays = (leaveSession === 'Cả ngày') ? 1 : 0.5;
+    } else if (leaveType === 'Từ ngày đến ngày') {
+        var startDate = $('#startDateRange').val();
+        var endDate = $('#endDate').val();
+        if (!startDate || !endDate) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Thiếu thông tin',
+                text: 'Vui lòng chọn ngày bắt đầu và ngày kết thúc'
+            });
+            return;
+        }
+        leaveDays = calculateBusinessDaysExcludingHolidays(startDate, endDate);
+    } else {
+        Swal.fire({
+            icon: 'error',
+            title: 'Thiếu thông tin',
+            text: 'Vui lòng chọn loại nghỉ phép'
+        });
+        return;
+    }
+    
+    // Hiển thị thông báo đang xử lý để tránh người dùng nhấn nút nhiều lần
+    var submitButton = $(formElement).find('button[type="submit"]');
+    submitButton.prop('disabled', true);
+    submitButton.html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Đang xử lý...');
+    
+    // Gọi hàm kiểm tra trùng lặp trước khi submit form
+    google.script.run
+        .withSuccessHandler(function(hasOverlap) {
+            if (hasOverlap) {
+                // Nếu phát hiện trùng lặp, hiển thị thông báo lỗi
+                submitButton.prop('disabled', false);
+                submitButton.html('Gửi');
+                
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Trùng lặp thời gian nghỉ!',
+                    text: 'Bạn đã có đơn nghỉ phép cho thời gian này. Vui lòng kiểm tra lại!'
+                });
+                return;
+            }
+            
+            // Nếu không có trùng lặp, tiếp tục xử lý
+            // Set timeout để ngăn treo giao diện
+            var timeoutId = setTimeout(function() {
+                submitButton.prop('disabled', false);
+                submitButton.html('Gửi');
+                Swal.fire({
+                    icon: 'warning',
+                    title: 'Xử lý quá lâu',
+                    text: 'Dữ liệu có thể đã được gửi nhưng xử lý quá lâu. Vui lòng kiểm tra lại sau.'
+                });
+            }, 30000); // 30 giây
+            
+            google.script.run
+                .withSuccessHandler(function(response) {
+                    // Xóa timeout
+                    clearTimeout(timeoutId);
+                    
+                    // Khôi phục nút submit
+                    submitButton.prop('disabled', false);
+                    submitButton.html('Gửi');
+                    
+                    // Đóng modal và reset form
+                    $('#addLeaveModal').modal('hide');
+                    formElement.reset();
+                    
+                    // Hiển thị thông báo thành công kiểu toast ở góc phải
+                    showSuccessFlash(response, function() {
+                        // Sau khi thông báo thành công, cập nhật dữ liệu
+                        loadPendingData();
+                        updateDataCounts();
+                        
+                        // Cập nhật số phép ở bước cuối cùng
+                        forceUpdateLeaveBalance();
+                    });
+                })
+                .withFailureHandler(function(error) {
+                    // Xóa timeout
+                    clearTimeout(timeoutId);
+                    
+                    // Khôi phục nút submit
+                    submitButton.prop('disabled', false);
+                    submitButton.html('Gửi');
+                    
+                    // Hiển thị thông báo lỗi
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Lỗi!',
+                        text: error.message || 'Không thể thêm đơn nghỉ phép. Vui lòng thử lại sau.'
+                    });
+                })
+                .addLeaveRequest(formElement);
+        })
+        .withFailureHandler(function(error) {
+            // Khôi phục nút submit nếu có lỗi khi kiểm tra trùng lặp
+            submitButton.prop('disabled', false);
+            submitButton.html('Gửi');
+            
+            // Hiển thị thông báo lỗi
+            Swal.fire({
+                icon: 'error',
+                title: 'Lỗi!',
+                text: 'Không thể kiểm tra trùng lặp: ' + error
+            });
+        })
+        .checkLeaveOverlap(
+            $('#email').val(),
+            leaveType === 'Trong ngày' ? $('#startDate').val() : $('#startDateRange').val(),
+            leaveType === 'Trong ngày' ? $('#startDate').val() : $('#endDate').val(),
+            leaveType,
+            leaveType === 'Trong ngày' ? $('#leaveSession').val() : 'Cả ngày'
+        );
+});
+    
+    // Sự kiện submit form sửa đơn nghỉ phép
+$('#editLeaveForm').submit(function(event) {
+    event.preventDefault();
+    
+    // [Các kiểm tra cơ bản giữ nguyên]
+    
+    var formElement = this;
+    var editId = $('#editId').val();
+    var email = $('#editEmail').val();
+    var leaveType = $('#editLeaveType').val();
+    var startDate, endDate, leaveSession;
+    
+    if (leaveType === 'Trong ngày') {
+        startDate = $('#editStartDate').val();
+        endDate = startDate;
+        leaveSession = $('#editLeaveSession').val();
+    } else if (leaveType === 'Từ ngày đến ngày') {
+        startDate = $('#editStartDateRange').val();
+        endDate = $('#editEndDate').val();
+        leaveSession = 'Cả ngày';
+    }
+    
+    // Hiển thị thông báo đang xử lý
+    var submitButton = $('#editLeaveForm').find('button[type="submit"]');
+    submitButton.prop('disabled', true);
+    submitButton.html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Đang xử lý...');
+    
+    // Gọi hàm kiểm tra trùng lặp trước khi cập nhật đơn
+    google.script.run
+        .withSuccessHandler(function(hasOverlap) {
+            if (hasOverlap) {
+                // Nếu phát hiện trùng lặp, hiển thị thông báo lỗi
+                submitButton.prop('disabled', false);
+                submitButton.html('Cập nhật');
+                
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Trùng lặp thời gian nghỉ!',
+                    text: 'Bạn đã có đơn nghỉ phép cho thời gian này. Vui lòng kiểm tra lại!'
+                });
+                return;
+            }
+            
+            // Nếu không có trùng lặp, tiếp tục xử lý
+            var formData = {
+                editId: $('#editId').val(),
+                editName: $('#editName').val(),
+                editEmail: $('#editEmail').val(),
+                editDepartment: $('#editDepartment').val(),
+                editRole: $('#editRole').val(),
+                editStartDate: startDate,
+                editEndDate: endDate,
+                editLeaveType: leaveType,
+                editLeaveSession: leaveSession,
+                editReason: $('#editReason').val(),
+                editFile: $('#editFile').val(),
+                editStatus: $('#editStatus').val(),
+                editNote: $('#editNote').val(),
+                currentUserRole: currentUserRole,
+                currentUserEmail: currentUserEmail
+            };
+            
+            google.script.run
+                .withSuccessHandler(function(response) {
+                    submitButton.prop('disabled', false);
+                    submitButton.html('Cập nhật');
+                    $('#editLeaveModal').modal('hide');
+                    
+                    // Hiển thị thông báo ngay lập tức
+                    showSuccessFlash(response, function() {
+                        // Sau đó mới cập nhật dữ liệu (không ảnh hưởng đến trải nghiệm người dùng)
+                        loadPendingData();
+                        loadApprovedData();
+                        loadDisapprovedData();
+                        updateDataCounts();
+                        
+                        // Cập nhật số phép sau cùng
+                        forceUpdateLeaveBalance();
+                    });
+                })
+                .withFailureHandler(function(error) {
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Lỗi!',
+                        text: error.message || 'Không thể cập nhật đơn nghỉ phép. Vui lòng thử lại sau.'
+                    });
+                    submitButton.prop('disabled', false).html('Cập nhật');
+                })
+                .editLeaveRequest(formData);
+        })
+        .withFailureHandler(function(error) {
+            // Khôi phục nút submit nếu có lỗi khi kiểm tra trùng lặp
+            submitButton.prop('disabled', false);
+            submitButton.html('Cập nhật');
+            
+            // Hiển thị thông báo lỗi
+            Swal.fire({
+                icon: 'error',
+                title: 'Lỗi!',
+                text: 'Không thể kiểm tra trùng lặp: ' + error
+            });
+        })
+        .checkLeaveOverlapExcludingSelf(
+            email,
+            startDate,
+            endDate,
+            leaveType,
+            leaveSession,
+            editId
+        );
+});
+    
+    // Sự kiện submit form thêm người dùng
+    $('#addUserForm').submit(function (event) {
+        event.preventDefault();
+        addUser();
+    });
+
+    // Sự kiện submit form sửa người dùng
+    $('#editUserForm').submit(function (event) {
+        event.preventDefault();
+        updateUser();
+    });
+    
+    // Sự kiện submit form thêm phòng ban
+    $('#addDepartmentForm').submit(function(event) {
+        event.preventDefault();
+        addDepartment();
+    });
+    
+    // Sự kiện submit form sửa phòng ban
+    $('#editDepartmentForm').submit(function(event) {
+        event.preventDefault();
+        editDepartment();
+    });
+    
+    // Sự kiện submit form thêm chức vụ
+    $('#addRoleForm').submit(function(event) {
+        event.preventDefault();
+        addRole();
+    });
+    
+    // Sự kiện submit form sửa chức vụ
+    $('#editRoleForm').submit(function(event) {
+        event.preventDefault();
+        editRole();
+    });
+    
+    // Sự kiện submit form thêm ngày nghỉ lễ
+    $('#addHolidayForm').submit(function(event) {
+        event.preventDefault();
+        addHoliday();
+    });
+});
+
+// Function to initialize Select2
+function initSelect2() {
+  $('.department-select').select2({
+    placeholder: "Chọn phòng ban",
+    allowClear: true,
+    width: '100%',
+    dropdownParent: $('#editUserModal') // Chỉ định cụ thể cho form edit
+  });
+  
+  $('.role-select').select2({
+    placeholder: "Chọn chức vụ",
+    allowClear: true,
+    width: '100%',
+    dropdownParent: $('#editUserModal') // Chỉ định cụ thể cho form edit
+  });
+  
+  $('.approver-select').select2({
+    placeholder: "Chọn người phê duyệt",
+    allowClear: true,
+    width: '100%',
+    dropdownParent: $('#editUserModal') // Chỉ định cụ thể cho form edit
+  });
+}
+
+// Xử lý form đơn nghỉ phép
+function submitLeaveForm() {
+    var formElement = document.getElementById('addLeaveForm');
+    
+    // Kiểm tra các trường bắt buộc
+    if (!formElement.checkValidity()) {
+        formElement.reportValidity();
+        return;
+    }
+    
+    // Tạo dữ liệu form từ trường hiển thị
+    var leaveType = $('#leaveType').val();
+    var startDate, endDate, leaveSession;
+    
+    if (leaveType === 'Trong ngày') {
+        startDate = $('#startDate').val();
+        endDate = startDate;
+        leaveSession = $('#leaveSession').val();
+    } else if (leaveType === 'Từ ngày đến ngày') {
+        startDate = $('#startDateRange').val();
+        endDate = $('#endDate').val();
+        leaveSession = 'Cả ngày';
+    }
+    
+    // Tính số ngày nghỉ
+    var leaveDays;
+    if (leaveType === 'Trong ngày') {
+        leaveDays = (leaveSession === 'Cả ngày') ? 1 : 0.5;
+    } else {
+        leaveDays = calculateBusinessDaysExcludingHolidays(startDate, endDate);
+    }
+    
+    // Kiểm tra nếu vượt quá số phép còn lại
+    var leaveBalance = JSON.parse(sessionStorage.getItem('leaveBalance'));
+    if (leaveDays > leaveBalance.remaining) {
+        Swal.fire({
+            icon: 'error',
+            title: 'Vượt quá số phép!',
+            text: `Số ngày nghỉ (${leaveDays} ngày) vượt quá số phép còn lại (${leaveBalance.remaining} ngày).`
+        });
+        return;
+    }
+    
+    var formData = {
+        name: $('#name').val(),
+        email: $('#email').val(),
+        department: $('#department').val(),
+        role: $('#role').val(),
+        startDate: startDate,
+        endDate: endDate,
+        leaveType: leaveType,
+        leaveSession: leaveSession,
+        reason: $('#reason').val(),
+        myFile: $('#fileInput')[0].files[0],
+        status: $('#status').val(),
+        note: $('#note').val()
+    };
+    
+    var submitButton = $('#addLeaveForm').find('button[type="submit"]');
+    submitButton.prop('disabled', true);
+    submitButton.html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Đang gửi...');
+    
+    // Set timeout để ngăn treo giao diện
+    var timeoutId = setTimeout(function() {
+        submitButton.prop('disabled', false);
+        submitButton.html('Gửi');
+        Swal.fire({
+            icon: 'warning',
+            title: 'Xử lý quá lâu',
+            text: 'Dữ liệu có thể đã được gửi nhưng xử lý quá lâu. Vui lòng kiểm tra lại sau.'
+        });
+    }, 30000); // 30 giây
+    
+    google.script.run
+        .withSuccessHandler(function(response) {
+            // Xóa timeout
+            clearTimeout(timeoutId);
+            
+            // Khôi phục nút submit
+            submitButton.prop('disabled', false);
+            submitButton.html('Gửi');
+            
+            // Đóng modal và reset form
+            $('#addLeaveModal').modal('hide');
+            formElement.reset();
+            
+            // Hiển thị thông báo thành công kiểu toast ở góc phải
+            showSuccessFlash(response, function() {
+                // Sau khi thông báo thành công, cập nhật dữ liệu
+                loadPendingData();
+                updateLeaveBalanceDisplay();
+                updateDataCounts();
+            });
+        })
+        .withFailureHandler(function(error) {
+            // Xóa timeout
+            clearTimeout(timeoutId);
+            
+            // Khôi phục nút submit
+            submitButton.prop('disabled', false);
+            submitButton.html('Gửi');
+            
+            // Hiển thị thông báo lỗi
+            Swal.fire({
+                icon: 'error',
+                title: 'Lỗi!',
+                text: error.message || 'Không thể thêm đơn nghỉ phép. Vui lòng thử lại sau.'
+            });
+        })
+        .addLeaveRequest(formData);
+}
+
+// Xử lý form sửa đơn nghỉ phép
+function submitEditLeaveForm() {
+    var formElement = document.getElementById('editLeaveForm');
+    var leaveType = $('#editLeaveType').val();
+
+    // Các kiểm tra và xử lý ban đầu giữ nguyên...
+    if (leaveType === 'Từ ngày đến ngày') {
+        var startDate = $('#editStartDateRange').val();
+        var endDate = $('#editEndDate').val();
+        
+        if (!validateDateRange(startDate, endDate)) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Ngày không hợp lệ',
+                text: 'Ngày kết thúc không thể sớm hơn ngày bắt đầu!'
+            });
+            return;
+        }
+    }
+    
+    // Đảm bảo các trường required phù hợp...
+    if (leaveType === 'Trong ngày') {
+        $('#editStartDate').prop('required', true);
+        $('#editStartDateRange').prop('required', false);
+        $('#editEndDate').prop('required', false);
+    } else if (leaveType === 'Từ ngày đến ngày') {
+        $('#editStartDate').prop('required', false);
+        $('#editStartDateRange').prop('required', true);
+        $('#editEndDate').prop('required', true);
+    }
+    
+    // Kiểm tra các trường bắt buộc...
+    if (!formElement.checkValidity()) {
+        formElement.reportValidity();
+        return;
+    }
+    
+    // Tạo dữ liệu form từ trường hiển thị
+    var startDate, endDate, leaveSession;
+    
+    if (leaveType === 'Trong ngày') {
+        startDate = $('#editStartDate').val();
+        endDate = startDate;
+        leaveSession = $('#editLeaveSession').val();
+    } else if (leaveType === 'Từ ngày đến ngày') {
+        startDate = $('#editStartDateRange').val();
+        endDate = $('#editEndDate').val();
+        leaveSession = 'Cả ngày';
+        
+        if (!validateDateRange(startDate, endDate)) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Ngày không hợp lệ',
+                text: 'Ngày kết thúc không thể sớm hơn ngày bắt đầu!'
+            });
+            return;
+        }
+    }
+
+    // Kiểm tra nếu thiếu dữ liệu bắt buộc...
+    if (!startDate || (leaveType === 'Từ ngày đến ngày' && !endDate)) {
+        Swal.fire({
+            icon: 'error',
+            title: 'Thiếu thông tin',
+            text: 'Vui lòng điền đầy đủ thông tin ngày nghỉ'
+        });
+        return;
+    }
+    
+    // Lấy ra dữ liệu gốc để so sánh...
+    var originalId = $('#editId').val();
+    var originalStartDate, originalEndDate, originalLeaveType, originalLeaveSession;
+    
+    // Tìm dữ liệu gốc từ DataTable
+    var dataTable = $('#dataTable2').DataTable();
+    var originalData = null;
+    
+    dataTable.rows().every(function() {
+        var data = this.data();
+        var rowId = String(data[0]).replace(/^['"]|['"]$/g, "").trim();
+        if (rowId === originalId) {
+            originalData = data;
+            return false; // Dừng vòng lặp
+        }
+    });
+    
+    if (originalData) {
+        originalStartDate = convertDateFormat(originalData[5]);
+        originalEndDate = convertDateFormat(originalData[6]);
+        originalLeaveType = originalData[7];
+        originalLeaveSession = originalData[8];
+    }
+    
+    // Kiểm tra xem dữ liệu có thay đổi không
+    var isDataChanged = startDate !== originalStartDate || 
+                        endDate !== originalEndDate || 
+                        leaveType !== originalLeaveType || 
+                        leaveSession !== originalLeaveSession;
+    
+    // Tính số ngày nghỉ cho dữ liệu mới
+    var leaveDays;
+    if (leaveType === 'Trong ngày') {
+        leaveDays = (leaveSession === 'Cả ngày') ? 1 : 0.5;
+    } else {
+        leaveDays = calculateBusinessDaysExcludingHolidays(startDate, endDate);
+    }
+    
+    // Chỉ kiểm tra vượt quá phép nếu dữ liệu thực sự thay đổi
+    if (isDataChanged && currentUserRole !== 'admin' && $('#editStatus').val() === 'Đang xử lý') {
+        var leaveBalance = JSON.parse(sessionStorage.getItem('leaveBalance'));
+        
+        // Tính số ngày của đơn hiện tại
+        var currentLeaveDays;
+        if (originalLeaveType === 'Trong ngày') {
+            currentLeaveDays = (originalLeaveSession === 'Cả ngày') ? 1 : 0.5;
+        } else {
+            currentLeaveDays = calculateBusinessDaysExcludingHolidays(originalStartDate, originalEndDate);
+        }
+        
+        // Kiểm tra ngày bắt đầu nghỉ có sau 31/3 không
+        var requestStartDate = new Date(startDate);
+        var today = new Date();
+        var expireDate = new Date(today.getFullYear(), 2, 31); // 31/3 năm hiện tại
+        
+        // Điều chỉnh số phép còn lại dựa trên ngày bắt đầu nghỉ
+        var adjustedRemaining;
+        
+        if (requestStartDate > expireDate) {
+            // Nếu nghỉ sau 31/3, chỉ tính phép năm nay
+            adjustedRemaining = leaveBalance.remainingCurrentYear + currentLeaveDays;
+        } else {
+            // Nếu nghỉ trước hoặc vào 31/3, tính cả phép năm nay và năm trước
+            adjustedRemaining = leaveBalance.remaining + currentLeaveDays;
+        }
+        
+        if (leaveDays > adjustedRemaining) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Vượt quá số phép!',
+                text: `Số ngày nghỉ mới (${leaveDays} ngày) vượt quá số phép còn lại (${adjustedRemaining} ngày).`
+            });
+            return;
+        }
+    }
+    
+    // Phần còn lại giữ nguyên...
+    var formData = {
+        editId: $('#editId').val(),
+        editName: $('#editName').val(),
+        editEmail: $('#editEmail').val(),
+        editDepartment: $('#editDepartment').val(),
+        editRole: $('#editRole').val(),
+        editStartDate: startDate,
+        editEndDate: endDate,
+        editLeaveType: leaveType,
+        editLeaveSession: leaveSession,
+        editReason: $('#editReason').val(),
+        editFile: $('#editFile').val(),
+        editStatus: $('#editStatus').val(),
+        editNote: $('#editNote').val(),
+        currentUserRole: currentUserRole,
+        currentUserEmail: currentUserEmail
+    };
+    
+    var submitButton = $('#editLeaveForm').find('button[type="submit"]');
+    submitButton.prop('disabled', true);
+    submitButton.html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Đang cập nhật...');
+    
+    google.script.run
+        .withSuccessHandler(function(response) {
+            submitButton.prop('disabled', false);
+            submitButton.html('Cập nhật');
+            $('#editLeaveModal').modal('hide');
+            
+            // Hiển thị thông báo ngay lập tức
+            showSuccessFlash(response, function() {
+                loadPendingData();
+                loadApprovedData();
+                loadDisapprovedData();
+                updateDataCounts();
+                
+                // Cập nhật số phép sau cùng
+                forceUpdateLeaveBalance();
+            });
+        })
+        .withFailureHandler(function(error) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Lỗi!',
+                text: error.message || 'Không thể cập nhật đơn nghỉ phép. Vui lòng thử lại sau.'
+            });
+            submitButton.prop('disabled', false).html('Cập nhật');
+        })
+        .editLeaveRequest(formData);
+}
+
+$(document).ready(function() {
+    $('#editLeaveModal').on('shown.bs.modal', function () {
+        // Kích hoạt lại validation sau khi modal hiển thị
+        setTimeout(function() {
+            $('#editLeaveType').trigger('change');
+            calculateAndDisplayEditLeaveDays();
+        }, 200);
+    });
+});
+
+// Phương thức tải dữ liệu phòng ban
+function loadDepartments() {
+    google.script.run.withSuccessHandler(function(departmentsList) {
+        departments = removeDuplicates(departmentsList);
+        
+        // Cập nhật danh sách phòng ban
+        var tableBody = $('#departmentsTableBody');
+        tableBody.empty();
+        
+        for (var i = 0; i < departments.length; i++) {
+            var index = i + 1;
+            var department = departments[i];
+            
+            var row = $("<tr>");
+            row.append($("<td>").text(index));
+            row.append($("<td>").text(department));
+            
+            var actionsCell = $("<td>");
+            // Chỉ hiển thị nút sửa/xóa cho Admin
+            if (isAdmin) {
+                var editButton = $("<button>")
+                    .addClass("btn btn-sm btn-primary me-1")
+                    .html('<i class="fas fa-edit"></i>')
+                    .attr("onclick", "showEditDepartmentModal('" + department + "')");
+                    
+                var deleteButton = $("<button>")
+                    .addClass("btn btn-sm btn-danger")
+                    .html('<i class="fas fa-trash"></i>')
+                    .attr("onclick", "deleteDepartment('" + department + "')");
+                    
+                actionsCell.append(editButton).append(deleteButton);
+            } else {
+                actionsCell.text("-");
+            }
+            
+            row.append(actionsCell);
+            tableBody.append(row);
+        }
+        
+        // Cập nhật dropdown
+        updateDepartmentDropdowns();
+    }).getDepartments();
+}
+
+// Phương thức tải dữ liệu chức vụ
+function loadRoles() {
+    google.script.run.withSuccessHandler(function(rolesList) {
+        roles = removeDuplicates(rolesList);
+        
+        // Cập nhật danh sách chức vụ
+        var tableBody = $('#rolesTableBody');
+        tableBody.empty();
+        
+        for (var i = 0; i < roles.length; i++) {
+            var index = i + 1;
+            var role = roles[i];
+            
+            var row = $("<tr>");
+            row.append($("<td>").text(index));
+            row.append($("<td>").text(role));
+            
+            var actionsCell = $("<td>");
+            // Chỉ hiển thị nút sửa/xóa cho Admin
+            if (isAdmin) {
+                var editButton = $("<button>")
+                    .addClass("btn btn-sm btn-primary me-1")
+                    .html('<i class="fas fa-edit"></i>')
+                    .attr("onclick", "showEditRoleModal('" + role + "')");
+                    
+                var deleteButton = $("<button>")
+                    .addClass("btn btn-sm btn-danger")
+                    .html('<i class="fas fa-trash"></i>')
+                    .attr("onclick", "deleteRole('" + role + "')");
+                    
+                actionsCell.append(editButton).append(deleteButton);
+            } else {
+                actionsCell.text("-");
+            }
+            
+            row.append(actionsCell);
+            tableBody.append(row);
+        }
+        
+        // Cập nhật dropdown
+        updateRoleDropdowns();
+    }).getRoles();
+}
+
+// Chỉnh sửa hàm loadHolidays
+function loadHolidays() {
+    google.script.run
+        .withSuccessHandler(function(holidaysList) {
+            // Lưu danh sách holidays vào biến toàn cục để sử dụng khi kiểm tra
+            holidays = holidaysList;
+            
+            // Cập nhật danh sách ngày nghỉ lễ
+            var holidayList = $('#holidayList');
+            holidayList.empty();
+            
+            console.log("Holidays data received:", holidays); // Thêm log để debug
+            
+            if (!holidays || holidays.length === 0) {
+                holidayList.html('<div class="alert alert-info">Chưa có ngày nghỉ lễ nào được thiết lập.</div>');
+                return;
+            }
+            
+            // Hiển thị danh sách
+            for (var i = 0; i < holidays.length; i++) {
+                var holiday = holidays[i];
+                var badge = $('<div class="holiday-badge"></div>');
+                
+                badge.append($('<span></span>').text(holiday));
+                
+                // Chỉ hiển thị nút xóa cho Admin
+                if (isAdmin) {
+                    var closeIcon = $('<span class="close-icon"><i class="fas fa-times"></i></span>');
+                    closeIcon.attr('onclick', 'deleteHoliday(\'' + holiday + '\')');
+                    badge.append(closeIcon);
+                }
+                
+                holidayList.append(badge);
+            }
+            
+            // Cập nhật lại dữ liệu hiển thị trong các DataTable để hiển thị ngày lễ
+            refreshDataTables();
+        })
+        .withFailureHandler(function(error) {
+            console.error("Error loading holidays:", error);
+            $('#holidayList').html('<div class="alert alert-danger">Lỗi khi tải dữ liệu ngày nghỉ lễ.</div>');
+        })
+        .getHolidays();
+}
+
+function refreshDataTables() {
+    // Cập nhật lại các DataTable đang hiển thị
+    if ($.fn.DataTable.isDataTable('#dataTable2')) {
+        $('#dataTable2').DataTable().draw();
+    }
+    if ($.fn.DataTable.isDataTable('#dataTable3')) {
+        $('#dataTable3').DataTable().draw();
+    }
+    if ($.fn.DataTable.isDataTable('#dataTable4')) {
+        $('#dataTable4').DataTable().draw();
+    }
+}
+
+function addDepartment() {
+    // Kiểm tra quyền trước khi cho phép thêm
+    if (!isAdmin) {
+        Swal.fire({
+            icon: 'error',
+            title: 'Không có quyền',
+            text: 'Chỉ Admin có quyền thêm mới phòng ban!'
+        });
+        return;
+    }
+    var name = $('#departmentName').val();
+    
+    if (!name) {
+        Swal.fire({
+            icon: 'error',
+            title: 'Lỗi',
+            text: 'Vui lòng nhập tên phòng ban!'
+        });
+        return;
+    }
+    
+    var submitButton = $('#addDepartmentForm button[type="submit"]');
+    submitButton.prop('disabled', true);
+    submitButton.html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Đang xử lý...');
+    
+    google.script.run
+        .withSuccessHandler(function(response) {
+            submitButton.prop('disabled', false).html('Thêm');
+            $('#addDepartmentModal').modal('hide');
+            $('#departmentName').val('');
+            
+            showSuccessFlash(response, function() {
+                loadDepartments();
+            });
+        })
+        .withFailureHandler(function(error) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Lỗi!',
+                text: error.message || 'Không thể thêm phòng ban. Vui lòng thử lại sau.'
+            });
+            submitButton.prop('disabled', false).html('Thêm');
+        })
+        .addDepartment(name);
+}
+
+function addRole() {
+    // Kiểm tra quyền trước khi cho phép thêm
+    if (!isAdmin) {
+        Swal.fire({
+            icon: 'error',
+            title: 'Không có quyền',
+            text: 'Chỉ Admin có quyền thêm mới chức vụ!'
+        });
+        return;
+    }
+    
+    var name = $('#roleName').val();
+    
+    if (!name) {
+        Swal.fire({
+            icon: 'error',
+            title: 'Lỗi',
+            text: 'Vui lòng nhập tên chức vụ!'
+        });
+        return;
+    }
+    
+    var submitButton = $('#addRoleForm button[type="submit"]');
+    submitButton.prop('disabled', true);
+    submitButton.html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Đang xử lý...');
+    
+    google.script.run
+        .withSuccessHandler(function(response) {
+            submitButton.prop('disabled', false).html('Thêm');
+            $('#addRoleModal').modal('hide');
+            $('#roleName').val('');
+            
+            showSuccessFlash(response, function() {
+                loadRoles();
+            });
+        })
+        .withFailureHandler(function(error) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Lỗi!',
+                text: error.message || 'Không thể thêm chức vụ. Vui lòng thử lại sau.'
+            });
+            submitButton.prop('disabled', false).html('Thêm');
+        })
+        .addRole(name);
+}
+
+function addHoliday() {
+    // Kiểm tra quyền trước khi cho phép thêm
+    if (!isAdmin) {
+        Swal.fire({
+            icon: 'error',
+            title: 'Không có quyền',
+            text: 'Chỉ Admin có quyền thêm mới ngày nghỉ lễ!'
+        });
+        return;
+    }
+    var date = $('#holidayDate').val();
+    
+    if (!date) {
+        Swal.fire({
+            icon: 'error',
+            title: 'Lỗi',
+            text: 'Vui lòng chọn ngày nghỉ lễ!'
+        });
+        return;
+    }
+    
+    var submitButton = $('#addHolidayForm button[type="submit"]');
+    submitButton.prop('disabled', true);
+    submitButton.html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Đang xử lý...');
+    
+    google.script.run
+        .withSuccessHandler(function(response) {
+            submitButton.prop('disabled', false).html('Thêm');
+            $('#addHolidayModal').modal('hide');
+            $('#holidayDate').val('');
+            
+            showSuccessFlash(response, function() {
+                loadHolidays();
+            });
+        })
+        .withFailureHandler(function(error) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Lỗi!',
+                text: error.message || 'Không thể thêm ngày nghỉ lễ. Vui lòng thử lại sau.'
+            });
+            submitButton.prop('disabled', false).html('Thêm');
+        })
+        .addHoliday(date);
+}
+
+function showEditDepartmentModal(name) {
+    $('#oldDepartmentName').val(name);
+    $('#newDepartmentName').val(name);
+    $('#editDepartmentModal').modal('show');
+}
+
+function showEditRoleModal(name) {
+    $('#oldRoleName').val(name);
+    $('#newRoleName').val(name);
+    $('#editRoleModal').modal('show');
+}
+
+function editDepartment() {
+    var oldName = $('#oldDepartmentName').val();
+    var newName = $('#newDepartmentName').val();
+    
+    if (!newName) {
+        Swal.fire({
+            icon: 'error',
+            title: 'Lỗi',
+            text: 'Vui lòng nhập tên phòng ban mới!'
+        });
+        return;
+    }
+    
+    var submitButton = $('#editDepartmentForm button[type="submit"]');
+    submitButton.prop('disabled', true);
+    submitButton.html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Đang cập nhật...');
+    
+    google.script.run
+        .withSuccessHandler(function(response) {
+            submitButton.prop('disabled', false).html('Cập nhật');
+            $('#editDepartmentModal').modal('hide');
+            
+            showSuccessFlash(response, function() {
+                loadDepartments();
+            });
+        })
+        .withFailureHandler(function(error) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Lỗi!',
+                text: error.message || 'Không thể cập nhật phòng ban. Vui lòng thử lại sau.'
+            });
+            submitButton.prop('disabled', false).html('Cập nhật');
+        })
+        .editDepartment(oldName, newName);
+}
+
+function editRole() {
+    var oldName = $('#oldRoleName').val();
+    var newName = $('#newRoleName').val();
+    
+    if (!newName) {
+        Swal.fire({
+            icon: 'error',
+            title: 'Lỗi',
+            text: 'Vui lòng nhập tên chức vụ mới!'
+        });
+        return;
+    }
+    
+    var submitButton = $('#editRoleForm button[type="submit"]');
+    submitButton.prop('disabled', true);
+    submitButton.html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Đang cập nhật...');
+    
+    google.script.run
+        .withSuccessHandler(function(response) {
+            submitButton.prop('disabled', false).html('Cập nhật');
+            $('#editRoleModal').modal('hide');
+            
+            showSuccessFlash(response, function() {
+                loadRoles();
+            });
+        })
+        .withFailureHandler(function(error) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Lỗi!',
+                text: error.message || 'Không thể cập nhật chức vụ. Vui lòng thử lại sau.'
+            });
+            submitButton.prop('disabled', false).html('Cập nhật');
+        })
+        .editRole(oldName, newName);
+}
+
+function deleteDepartment(name) {
+    Swal.fire({
+        title: 'Xác nhận xóa',
+        text: 'Bạn có chắc chắn muốn xóa phòng ban "' + name + '" không?',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Xóa',
+        cancelButtonText: 'Hủy'
+    }).then((result) => {
+        if (result.isConfirmed) {
+            google.script.run
+                .withSuccessHandler(function(response) {
+                    showSuccessFlash(response, function() {
+                        loadDepartments();
+                    });
+                })
+                .withFailureHandler(function(error) {
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Lỗi!',
+                        text: error.message || 'Không thể xóa phòng ban. Vui lòng thử lại sau.'
+                    });
+                })
+                .deleteDepartment(name);
+        }
+    });
+}
+
+function deleteRole(name) {
+    Swal.fire({
+        title: 'Xác nhận xóa',
+        text: 'Bạn có chắc chắn muốn xóa chức vụ "' + name + '" không?',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Xóa',
+        cancelButtonText: 'Hủy'
+    }).then((result) => {
+        if (result.isConfirmed) {
+            google.script.run
+                .withSuccessHandler(function(response) {
+                    showSuccessFlash(response, function() {
+                        loadRoles();
+                    });
+                })
+                .withFailureHandler(function(error) {
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Lỗi!',
+                        text: error.message || 'Không thể xóa chức vụ. Vui lòng thử lại sau.'
+                    });
+                })
+                .deleteRole(name);
+        }
+    });
+}
+
+function deleteHoliday(date) {
+    Swal.fire({
+        title: 'Xác nhận xóa',
+        text: 'Bạn có chắc chắn muốn xóa ngày nghỉ lễ "' + date + '" không?',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Xóa',
+        cancelButtonText: 'Hủy'
+    }).then((result) => {
+        if (result.isConfirmed) {
+            google.script.run
+                .withSuccessHandler(function(response) {
+                    showSuccessFlash(response, function() {
+                        loadHolidays();
+                    });
+                })
+                .withFailureHandler(function(error) {
+                    console.error("Error deleting holiday:", error); // Thêm log để debug
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Lỗi!',
+                        text: error.message || 'Không thể xóa ngày nghỉ lễ. Vui lòng thử lại sau.'
+                    });
+                })
+                .deleteHoliday(date);
+        }
+    });
+}
+
+// Cập nhật các dropdown
+function updateDepartmentDropdowns() {
+    var departmentSelects = $('.department-select');
+    
+    departmentSelects.each(function() {
+        var select = $(this);
+        var currentValue = select.val();
+        
+        select.empty().append('<option value=""></option>');
+        
+        for (var i = 0; i < departments.length; i++) {
+            select.append('<option value="' + departments[i] + '">' + departments[i] + '</option>');
+        }
+        
+        if (currentValue) {
+            select.val(currentValue);
+        }
+    });
+}
+
+function updateRoleDropdowns() {
+    var roleSelects = $('.role-select');
+    
+    roleSelects.each(function() {
+        var select = $(this);
+        var currentValue = select.val();
+        
+        select.empty().append('<option value=""></option>');
+        
+        for (var i = 0; i < roles.length; i++) {
+            select.append('<option value="' + roles[i] + '">' + roles[i] + '</option>');
+        }
+        
+        if (currentValue) {
+            select.val(currentValue);
+        }
+    });
+}
+
+// Cập nhật dropdown người phê duyệt
+function loadApprovers() {
+    google.script.run.withSuccessHandler(function(approvers) {
+        var approverSelects = $('.approver-select');
+        
+        approverSelects.each(function() {
+            var select = $(this);
+            var currentValue = select.val();
+            
+            select.empty().append('<option value=""></option>');
+            
+            for (var i = 0; i < approvers.length; i++) {
+                var approver = approvers[i];
+                select.append('<option value="' + approver.email + '">' + approver.name + ' (' + approver.role + ')</option>');
+            }
+            
+            if (currentValue) {
+                select.val(currentValue);
+            }
+        });
+    }).getApprovers();
+}
+
+// Chức năng quản lý người dùng
+function addUser() {
+  var form = document.getElementById("addUserForm");
+  var requiredFields = ['name', 'email', 'password', 'department', 'role', 'approverEmail'];
+  for (var i = 0; i < requiredFields.length; i++) {
+    var field = requiredFields[i];
+    if (!form[field].value) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Lỗi',
+        text: 'Vui lòng điền vào tất cả các trường bắt buộc.'
+      });
+      return;
+    }
+  }
+
+  var formData = {
+    name: $('#userName').val(),
+    email: $('#userEmail').val(),
+    password: $('#userPassword').val(),
+    department: $('#userDepartment').val(),
+    role: $('#userRole').val(),
+    approverEmail: $('#userApproverEmail').val(),
+    leaveStartDate: $('#userLeaveStartDate').val(),
+    // Bỏ trường totalLeave
+    previousYearLeave: $('#userPreviousYearLeave').val(),
+    image: $('#userImage').val()
+  };
+
+  var submitButton = $('#addUserForm').find('button[type="submit"]');
+  submitButton.prop('disabled', true);
+  submitButton.html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Đang xử lý...');
+
+  google.script.run
+    .withSuccessHandler(function(response) {
+      submitButton.prop('disabled', false).html('Thêm');
+      $('#addUserForm')[0].reset();
+      $('#addUserModal').modal('hide');
+      
+      showSuccessFlash(response, function() {
+        loadUserData();
+      });
+    })
+    .withFailureHandler(function(error) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Lỗi!',
+        text: error.message || 'Không thể thêm người dùng. Vui lòng thử lại sau.'
+      });
+      submitButton.prop('disabled', false).html('Thêm');
+    })
+    .addUser(formData);
+}
+
+function editUser(id) {
+  // Hiển thị modal
+  $('#editUserModal').modal('show');
+  
+  // Tải dữ liệu từ server
+  google.script.run
+    .withSuccessHandler(function(userData) {
+      if (userData) {
+        $('#editUserId').val(userData[0]);
+        $('#editUserName').val(userData[1]);
+        $('#editUserEmail').val(userData[2]);
+        $('#editUserOldEmail').val(userData[2]); // Lưu email cũ
+        $('#editUserPassword').val(userData[3]);
+        $('#editUserImage').val(userData[4]);
+        $('#editUserDepartment').val(userData[5]);
+        $('#editUserRole').val(userData[6]);
+        $('#editUserApproverEmail').val(userData[7]);
+        
+        // Cải thiện xử lý ngày tháng - xử lý cả định dạng Date và chuỗi
+        if (userData[8]) {
+          // Nếu userData[8] là đối tượng Date
+          if (userData[8] instanceof Date) {
+            var year = userData[8].getFullYear();
+            var month = String(userData[8].getMonth() + 1).padStart(2, '0');
+            var day = String(userData[8].getDate()).padStart(2, '0');
+            $('#editUserLeaveStartDate').val(`${year}-${month}-${day}`);
+          } 
+          // Nếu userData[8] là chuỗi có dạng dd/MM/yyyy
+          else if (typeof userData[8] === 'string' && userData[8].includes('/')) {
+            var dateParts = userData[8].split('/');
+            if (dateParts.length === 3) {
+              $('#editUserLeaveStartDate').val(`${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`);
+            } else {
+              $('#editUserLeaveStartDate').val(userData[8]);
+            }
+          } 
+          // Trường hợp khác
+          else {
+            $('#editUserLeaveStartDate').val(userData[8]);
+          }
+        }
+        
+        $('#editUserTotalLeave').val(userData[9]);
+        
+        // Đảm bảo lấy đúng cột phép năm trước (cột K)
+        if (userData.length > 10) {
+          $('#editUserPreviousYearLeave').val(userData[10] || 0);
+        } else {
+          $('#editUserPreviousYearLeave').val(0);
+        }
+        
+        // Cập nhật Select2
+        setTimeout(function() {
+          $('#editUserDepartment').trigger('change');
+          $('#editUserRole').trigger('change');
+          $('#editUserApproverEmail').trigger('change');
+        }, 100);
+      } else {
+        setTimeout(function() {
+          $('#editUserModal').modal('hide');
+          Swal.fire({
+            icon: 'error',
+            title: 'Lỗi',
+            text: 'Không tìm thấy thông tin người dùng!'
+          });
+        }, 500);
+      }
+    })
+    .getUserById(id);
+}
+
+function updateUser() {
+  var formData = {
+    id: $('#editUserId').val(),
+    name: $('#editUserName').val(),
+    email: $('#editUserEmail').val(),
+    oldEmail: $('#editUserOldEmail').val(),
+    password: $('#editUserPassword').val(),
+    department: $('#editUserDepartment').val(),
+    role: $('#editUserRole').val(),
+    approverEmail: $('#editUserApproverEmail').val(),
+    leaveStartDate: $('#editUserLeaveStartDate').val(),
+    previousYearLeave: $('#editUserPreviousYearLeave').val(),
+    image: $('#editUserImage').val()
+  };
+
+  var submitButton = $('#editUserForm').find('button[type="submit"]');
+  submitButton.prop('disabled', true);
+  submitButton.html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Đang cập nhật...');
+
+  google.script.run
+    .withSuccessHandler(function(response) {
+      submitButton.prop('disabled', false).html('Cập nhật');
+      $('#editUserModal').modal('hide');
+      
+      showSuccessFlash(response, function() {
+        // Cập nhật danh sách người dùng
+        loadUserData();
+        
+        // Kiểm tra nếu đang cập nhật thông tin người dùng hiện tại
+        var currentUserEmail = $('#user-email').text();
+        if (formData.email === currentUserEmail || formData.oldEmail === currentUserEmail) {
+          // Cập nhật thông tin sidebar ngay lập tức
+          forceUpdateLeaveBalance();
+          
+          // Cập nhật thông tin người dùng hiện tại nếu cần
+          if (formData.name) $('#user-name').text(formData.name);
+          if (formData.department) $('#user-department').text(formData.department);
+          if (formData.role) $('#user-role').text(formData.role);
+          if (formData.image) $('#userAvatar').attr('src', formData.image);
+        }
+      });
+    })
+    .withFailureHandler(function(error) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Lỗi!',
+        text: error.message || 'Không thể cập nhật người dùng. Vui lòng thử lại sau.'
+      });
+      submitButton.prop('disabled', false).html('Cập nhật');
+    })
+    .editUser(formData);
+}
+
+function deleteUser(id) {
+    Swal.fire({
+        title: 'Xác nhận xóa',
+        text: 'Bạn có chắc chắn muốn xóa người dùng này không?',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Xóa',
+        cancelButtonText: 'Hủy'
+    }).then((result) => {
+        if (result.isConfirmed) {
+            google.script.run
+                .withSuccessHandler(function(response) {
+                    showSuccessFlash(response, function() {
+                        loadUserData();
+                    });
+                })
+                .withFailureHandler(function(error) {
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Lỗi!',
+                        text: error.message || 'Không thể xóa người dùng. Vui lòng thử lại sau.'
+                    });
+                })
+                .deleteUser(id);
+        }
+    });
+}
+
+// Hàm tải dữ liệu
+function loadAllData() {
+    // Ẩn tất cả các section trước
+    $('.content-section').hide();
+    // Hiển thị dashboard
+    $('#dashboard').show();
+    
+    updateDataCounts();
+    
+    // Tải dữ liệu thống kê
+    loadStatsByDepartment();
+    loadStatsByMonth();
+    
+    // Tải danh mục
+    loadDepartments();
+    loadRoles();
+    loadHolidays();
+    loadApprovers();
+    
+    // Cập nhật số phép
+    updateLeaveBalanceDisplay();
+    
+    // Load data tùy theo quyền và tab hiện tại
+    if (isAdmin) {
+        loadUserData();
+    }
+    
+    // Load tất cả dữ liệu báo cáo ngay khi đăng nhập
+    loadPendingData();
+    loadApprovedData();
+    loadDisapprovedData();
+    loadApproverRelationships();
+}
+
+// Tải dữ liệu thống kê theo phòng ban
+function loadStatsByDepartment() {
+  google.script.run
+    .withSuccessHandler(function(data) {
+      updateDepartmentChart(data);
+    })
+    .withFailureHandler(function(error) {
+      console.error("Lỗi khi tải dữ liệu thống kê theo phòng ban:", error);
+      $('#departmentChart').parent().html('<div class="alert alert-danger m-3">Lỗi khi tải dữ liệu: ' + error + '</div>');
+    })
+    .getLeaveStatsByDepartment(currentUserEmail, currentUserRole);
+}
+
+// Tải dữ liệu thống kê theo tháng
+function loadStatsByMonth() {
+  google.script.run
+    .withSuccessHandler(function(data) {
+      updateMonthlyChart(data);
+    })
+    .withFailureHandler(function(error) {
+      console.error("Lỗi khi tải dữ liệu thống kê theo tháng:", error);
+      $('#monthlyChart').parent().html('<div class="alert alert-danger m-3">Lỗi khi tải dữ liệu: ' + error + '</div>');
+    })
+    .getLeaveStatsByMonth(currentUserEmail, currentUserRole);
+}
+    
+function loadUserData() {
+    if (isAdmin) {
+        google.script.run
+            .withSuccessHandler(function(data) {
+                initializeDataTable('#dataTable1', data);
+            })
+            .getUserData();
+    }
+}
+    
+function loadPendingData() {
+    google.script.run
+        .withSuccessHandler(function(data) {
+            initializeDataTable('#dataTable2', data);
+        })
+        .getPendingData(currentUserEmail, currentUserRole);
+}
+    
+function loadApprovedData() {
+    google.script.run
+        .withSuccessHandler(function(data) {
+            initializeDataTable('#dataTable3', data);
+        })
+        .getApprovedData(currentUserEmail, currentUserRole);
+}
+    
+function loadDisapprovedData() {
+    google.script.run
+        .withSuccessHandler(function(data) {
+            initializeDataTable('#dataTable4', data);
+        })
+        .getDisapprovedData(currentUserEmail, currentUserRole);
+}
+
+function initializeDataTable(tableId, data) {
+    // Nếu bảng đã được khởi tạo, hủy nó trước
+    if ($.fn.DataTable.isDataTable(tableId)) {
+        $(tableId).DataTable().destroy();
+    }
+    
+    var columns = [];
+    var pageLength = 10;
+    var responsiveConfig = {
+        responsive: true,
+        autoWidth: true
+    };
+    
+    try {
+        var parsedData = [];
+        
+        // Xử lý dữ liệu trống
+        if (data && data.length > 0) {
+            try {
+                if (typeof data === 'string') {
+                    parsedData = JSON.parse(data);
+                } else {
+                    parsedData = data;
+                }
+            } catch (e) {
+                console.error("Lỗi parse dữ liệu:", e);
+                parsedData = [];
+            }
+        }
+        
+        switch (tableId) {
+            case '#dataTable1': // Bảng người dùng
+                columns = [
+                    { title: "ID", data: 0 },
+                    { title: "Họ và tên", data: 1 },
+                    { title: "Email đăng nhập", data: 2 },
+                    { title: "Phòng ban", data: 5 },
+                    { title: "Chức vụ", data: 6 },
+                    { title: "Người phê duyệt", data: 7 },
+                    { 
+                        title: "Ngày bắt đầu", 
+                        data: 8,
+                        render: function(data, type, row) {
+                            if (type === 'display' && data) {
+                                return formatDate(data);
+                            }
+                            return data;
+                        }
+                    },
+                    { title: "Phép năm", data: 9 },
+                    { 
+                        title: "Phép năm cũ", 
+                        data: 10,
+                        render: function(data, type, row) {
+                            if (type === 'display') {
+                                var value = parseFloat(data) || 0;
+                                return value.toFixed(1);
+                            }
+                            return data;
+                        }
+                    },
+                    { 
+                        title: "Hành động",
+                        data: null,
+                        render: function(data, type, row) {
+                            if (type === 'display') {
+                                return '<div class="d-flex">' +
+                                    '<button class="btn btn-sm btn-primary btn-action me-1" onclick="editUser(' + row[0] + ')">' +
+                                    '<i class="fa fa-edit"></i>' +
+                                    '</button>' +
+                                    '<button class="btn btn-sm btn-danger btn-action" onclick="deleteUser(' + row[0] + ')">' +
+                                    '<i class="fa fa-trash"></i>' +
+                                    '</button>' +
+                                    '</div>';
+                            }
+                            return '';
+                        }
+                    }
+                ];
+                break;
+            case '#dataTable2': // Bảng đơn nghỉ phép đang xử lý
+                columns = [
+                    { 
+                        title: "ID", 
+                        data: 0,
+                        className: "dtr-control" // Thêm class này để hiển thị dấu +
+                    },
+                    { title: "Họ và tên", data: 1 },
+                    { 
+                        title: "Email", 
+                        data: 2,
+                        className: "none" // Ẩn cột Email, chỉ hiển thị trong bảng phụ
+                    },
+                    { title: "Phòng ban", data: 3 },
+                    { title: "Chức vụ", data: 4 },
+                    { 
+                        title: "Ngày bắt đầu", 
+                        data: 5,
+                        className: "date-format",
+                        render: function(data, type, row) {
+                            if (type === 'display' && data) {
+                                var formattedDate = formatDate(data);
+                                
+                                // Kiểm tra nếu là ngày nghỉ lễ
+                                if (isHolidayFromList(formattedDate)) {
+                                    return '<span class="holiday-date">' + formattedDate + '</span>';
+                                }
+                                
+                                return formattedDate;
+                            }
+                            return data;
+                        }
+                    },
+                    { 
+                        title: "Ngày kết thúc", 
+                        data: 6,
+                        className: "date-format",
+                        render: function(data, type, row) {
+                            if (type === 'display' && data) {
+                                var formattedDate = formatDate(data);
+                                
+                                // Kiểm tra nếu là ngày nghỉ lễ
+                                if (isHolidayFromList(formattedDate)) {
+                                    return '<span class="holiday-date">' + formattedDate + '</span>';
+                                }
+                                
+                                return formattedDate;
+                            }
+                            return data;
+                        }
+                    },
+                    { 
+                        title: "Loại nghỉ", 
+                        data: 7,
+                        render: function(data, type, row) {
+                            if (type === 'display') {
+                                var badgeClass = '';
+                                if (data === 'Trong ngày') {
+                                    badgeClass = 'bg-info';
+                                } else if (data === 'Từ ngày đến ngày') {
+                                    badgeClass = 'bg-primary';
+                                }
+                                return '<span class="badge ' + badgeClass + '">' + data + '</span>';
+                            }
+                            return data;
+                        }
+                    },
+                    { 
+                        title: "Buổi nghỉ", 
+                        data: 8,
+                        render: function(data, type, row) {
+                            if (type === 'display') {
+                                var badgeClass = '';
+                                if (data === 'Cả ngày') {
+                                    badgeClass = 'bg-warning text-dark';
+                                } else if (data === 'Buổi sáng') {
+                                    badgeClass = 'bg-success';
+                                } else if (data === 'Buổi chiều') {
+                                    badgeClass = 'bg-danger';
+                                }
+                                return '<span class="badge ' + badgeClass + '">' + data + '</span>';
+                            }
+                            return data;
+                        }
+                    },
+                    { 
+                        title: "Lý do nghỉ", 
+                        data: 9,
+                        className: "table-cell-limited",
+                        render: function(data, type, row) {
+                            if (type === 'display' && data) {
+                                // Hiển thị dữ liệu rút gọn với nút Xem
+                                var displayText = data;
+                                if (data.length > 20) {
+                                    displayText = data.substr(0, 20) + '...';
+                                }
+                                
+                                return '<div title="' + data.replace(/"/g, '&quot;') + '">' + 
+                                      displayText + 
+                                      '<a href="#" class="view-more-btn" onclick="showFullDescription(\'' + 
+                                      data.replace(/'/g, "\\'") + '\'); return false;">Xem</a></div>';
+                            }
+                            return data;
+                        }
+                    },
+                    { 
+                        title: "Tệp",
+                        data: 10,
+                        render: function(data, type, row) {
+                            if (type === 'display' && data) {
+                                // Chỉ hiển thị nút xem trước nếu có URL tệp
+                                var fileIcon = 'fa-file';
+                                
+                                // Xác định icon dựa trên loại file (từ URL hoặc tên file)
+                                if (data.includes('.pdf')) {
+                                    fileIcon = 'fa-file-pdf';
+                                } else if (data.includes('.doc') || data.includes('.docx')) {
+                                    fileIcon = 'fa-file-word';
+                                } else if (data.includes('.xls') || data.includes('.xlsx')) {
+                                    fileIcon = 'fa-file-excel';
+                                } else if (data.includes('.jpg') || data.includes('.jpeg') || data.includes('.png') || data.includes('.gif')) {
+                                    fileIcon = 'fa-file-image';
+                                }
+                                
+                                return '<div class="d-flex gap-2">' +
+                                    '<button class="btn btn-sm btn-info" onclick="previewFile(\'' + data + '\')"><i class="fas fa-eye"></i></button>' +
+                                    '<a href="' + data + '" target="_blank" class="btn btn-sm btn-secondary"><i class="fas ' + fileIcon + '"></i></a>' +
+                                    '</div>';
+                            }
+                            return '';
+                        },
+                        responsivePriority: 1
+                    },
+                    { 
+                        title: "Trạng thái", 
+                        data: 11, 
+                        className: "none", // Ẩn cột Trạng thái, chỉ hiển thị trong bảng phụ
+                        render: function(data, type, row) {
+                            if (type === 'display') {
+                                var badgeClass = 'leave-badge-pending';
+                                return '<span class="leave-badge ' + badgeClass + '">' + data + '</span>';
+                            }
+                            return data;
+                        }
+                    },
+                    { 
+                        title: "Ghi chú",
+                        data: 12,
+                        className: "none", // Ẩn cột Ghi chú, chỉ hiển thị trong bảng phụ
+                        render: function(data, type, row) {
+                            if (type === 'display' && data && data.length > 20) {
+                                return '<span class="ellipsis-text">' + data.substr(0, 20) + 
+                                    '... <a href="#" onclick="showFullDescription(\'' + 
+                                    data.replace(/'/g, "\\'") + '\')">Xem</a></span>';
+                            } else {
+                                return data;
+                            }
+                        }
+                    },
+                    { 
+                        title: "Hành động",
+                        data: null,
+                        render: function(data, type, row) {
+                            if (type === 'display') {
+                                var buttons = '<div class="d-flex">';
+                                
+                                // Hiển thị nút hành động nếu:
+                                // 1. Là admin, HOẶC
+                                // 2. Email người dùng trùng với email trong hàng, HOẶC  
+                                // 3. Email người dùng là người phê duyệt của email trong hàng
+                                
+                                // Kiểm tra nếu là admin hoặc người tạo đơn
+                                var isOwner = currentUserEmail === row[2];
+                                var isApproverForThisUser = false;
+                                
+                                // Kiểm tra nếu người hiện tại là NPD của người tạo đơn
+                                var approverFor = JSON.parse(sessionStorage.getItem('approverFor') || '[]');
+                                if (approverFor.includes(row[2])) {
+                                    isApproverForThisUser = true;
+                                }
+                                
+                                if (isAdmin || isOwner || isApproverForThisUser) {
+                                    buttons += '<button class="btn btn-sm btn-primary btn-action me-1" onclick="editLeaveData(\'' + row[0] + '\')">' +
+                                              '<i class="fa fa-edit"></i>' +
+                                              '</button>';
+                                    
+                                    buttons += '<button class="btn btn-sm btn-danger btn-action" onclick="deleteLeaveData(\'' + row[0] + '\')">' +
+                                              '<i class="fa fa-trash"></i>' +
+                                              '</button>';
+                                }
+                                
+                                buttons += '</div>';
+                                return buttons;
+                            }
+                            return '';
+                        },
+                        responsivePriority: 4 
+                    }
+                ];
+                break;
+                case '#dataTable3': // Bảng đơn nghỉ phép đã phê duyệt
+                case '#dataTable4': // Bảng đơn nghỉ phép đã huỷ bỏ
+                    columns = [
+                        { 
+                            title: "ID", 
+                            data: 0,
+                            className: "dtr-control" // Thêm class này để hiển thị dấu +
+                        },
+                        { title: "Họ và tên", data: 1 },
+                        { 
+                            title: "Email", 
+                            data: 2,
+                            className: "none" // Ẩn cột Email, chỉ hiển thị trong bảng phụ
+                        },
+                        { title: "Phòng ban", data: 3 },
+                        { title: "Chức vụ", data: 4 },
+                        { 
+                            title: "Ngày bắt đầu", 
+                            data: 5,
+                            className: "date-format",
+                            render: function(data, type, row) {
+                                if (type === 'display' && data) {
+                                    var formattedDate = formatDate(data);
+                                    
+                                    // Kiểm tra nếu là ngày nghỉ lễ
+                                    if (isHolidayFromList(formattedDate)) {
+                                        return '<span class="holiday-date">' + formattedDate + '</span>';
+                                    }
+                                    
+                                    return formattedDate;
+                                }
+                                return data;
+                            }
+                        },
+                        { 
+                            title: "Ngày kết thúc", 
+                            data: 6,
+                            className: "date-format",
+                            render: function(data, type, row) {
+                                if (type === 'display' && data) {
+                                    var formattedDate = formatDate(data);
+                                    
+                                    // Kiểm tra nếu là ngày nghỉ lễ
+                                    if (isHolidayFromList(formattedDate)) {
+                                        return '<span class="holiday-date">' + formattedDate + '</span>';
+                                    }
+                                    
+                                    return formattedDate;
+                                }
+                                return data;
+                            }
+                        },
+                        { 
+                            title: "Loại nghỉ", 
+                            data: 7,
+                            render: function(data, type, row) {
+                                if (type === 'display') {
+                                    var badgeClass = '';
+                                    if (data === 'Trong ngày') {
+                                        badgeClass = 'bg-info';
+                                    } else if (data === 'Từ ngày đến ngày') {
+                                        badgeClass = 'bg-primary';
+                                    }
+                                    return '<span class="badge ' + badgeClass + '">' + data + '</span>';
+                                }
+                                return data;
+                            }
+                        },
+                        { 
+                            title: "Buổi nghỉ", 
+                            data: 8,
+                            render: function(data, type, row) {
+                                if (type === 'display') {
+                                    var badgeClass = '';
+                                    if (data === 'Cả ngày') {
+                                        badgeClass = 'bg-warning text-dark';
+                                    } else if (data === 'Buổi sáng') {
+                                        badgeClass = 'bg-success';
+                                    } else if (data === 'Buổi chiều') {
+                                        badgeClass = 'bg-danger';
+                                    }
+                                    return '<span class="badge ' + badgeClass + '">' + data + '</span>';
+                                }
+                                return data;
+                            }
+                        },
+                        { 
+                            title: "Lý do nghỉ", 
+                            data: 9,
+                            className: "table-cell-limited",
+                            render: function(data, type, row) {
+                                if (type === 'display' && data) {
+                                    // Hiển thị dữ liệu rút gọn với nút Xem
+                                    var displayText = data;
+                                    if (data.length > 20) {
+                                        displayText = data.substr(0, 20) + '...';
+                                    }
+                                    
+                                    return '<div title="' + data.replace(/"/g, '&quot;') + '">' + 
+                                          displayText + 
+                                          '<a href="#" class="view-more-btn" onclick="showFullDescription(\'' + 
+                                          data.replace(/'/g, "\\'") + '\'); return false;">Xem</a></div>';
+                                }
+                                return data;
+                            }
+                        },
+                        { 
+                            title: "Tệp",
+                            data: 10,
+                            render: function(data, type, row) {
+                                if (type === 'display' && data) {
+                                    // Tạo icon khác nhau dựa vào loại file
+                                    var fileIcon = 'fa-file-alt'; // Default icon
+                                    var fileType = 'unknown';
+                                    
+                                    if (data.includes('.pdf')) {
+                                        fileIcon = 'fa-file-pdf';
+                                        fileType = 'pdf';
+                                    } else if (data.includes('.doc') || data.includes('.docx')) {
+                                        fileIcon = 'fa-file-word';
+                                        fileType = 'word';
+                                    } else if (data.includes('.xls') || data.includes('.xlsx')) {
+                                        fileIcon = 'fa-file-excel';
+                                        fileType = 'excel';
+                                    } else if (data.includes('.jpg') || data.includes('.jpeg') || data.includes('.png') || data.includes('.gif')) {
+                                        fileIcon = 'fa-file-image';
+                                        fileType = 'image';
+                                    }
+                                    
+                                    return '<div class="d-flex gap-2">' +
+                                        '<button class="btn btn-sm btn-info" onclick="previewFile(\'' + data + '\', \'' + fileType + '\')"><i class="fas fa-eye"></i></button>' +
+                                        '<a href="' + data + '" target="_blank" class="btn btn-sm btn-secondary"><i class="fas ' + fileIcon + '"></i></a>' +
+                                        '</div>';
+                                }
+                                return '';
+                            },
+                            responsivePriority: 1
+                        },
+                        { 
+                            title: "Trạng thái", 
+                            data: 11, 
+                            className: "none", // Ẩn cột Trạng thái, chỉ hiển thị trong bảng phụ
+                            render: function(data, type, row) {
+                                if (type === 'display') {
+                                    var badgeClass = 'leave-badge-approved';
+                                    if (tableId === '#dataTable4') {
+                                        badgeClass = 'leave-badge-rejected';
+                                    }
+                                    return '<span class="leave-badge ' + badgeClass + '">' + data + '</span>';
+                                }
+                                return data;
+                            }
+                        },
+                        { 
+                            title: "Ghi chú",
+                            data: 12,
+                            className: "none", // Ẩn cột Ghi chú, chỉ hiển thị trong bảng phụ
+                            render: function(data, type, row) {
+                                if (type === 'display' && data && data.length > 20) {
+                                    return '<span class="ellipsis-text">' + data.substr(0, 20) + 
+                                        '... <a href="#" onclick="showFullDescription(\'' + 
+                                        data.replace(/'/g, "\\'") + '\')">Xem</a></span>';
+                                } else {
+                                    return data;
+                                }
+                            }
+                        },
+                        // Chỉ hiển thị cột hành động cho admin
+                        { 
+                            title: "Hành động",
+                            data: null,
+                            render: function(data, type, row) {
+                                if (type === 'display') {
+                                    // Kiểm tra quyền hạn
+                                    var isAdmin = currentUserRole === 'admin';
+                                    var isOwner = currentUserEmail === row[2];
+                                    
+                                    // Kiểm tra nếu người hiện tại là NPD của người tạo đơn
+                                    var isApproverForThisUser = false;
+                                    var approverFor = JSON.parse(sessionStorage.getItem('approverFor') || '[]');
+                                    if (approverFor.includes(row[2])) {
+                                        isApproverForThisUser = true;
+                                    }
+                                    
+                                    // Chỉ hiển thị nút quay lại cho admin hoặc người phê duyệt (với đơn của nhân viên)
+                                    if (isAdmin || (isApproverForThisUser && !isOwner)) {
+                                        return '<div class="d-flex">' +
+                                            '<button class="btn btn-sm btn-danger btn-action" onclick="moveBackToPending(\'' + row[0] + '\', \'' + (tableId === '#dataTable3' ? 'approved' : 'disapproved') + '\')">' +
+                                            '<i class="fa fa-undo"></i>' +
+                                            '</button>' +
+                                            '</div>';
+                                    }
+                                    return '';
+                                }
+                                return '';
+                            },
+                            responsivePriority: 1
+                        }
+                    ];
+                    break;
+            default:
+                break;
+        }
+        
+        var language = {
+            "sProcessing":   "Đang xử lý...",
+            "sLengthMenu":   "Hiển thị _MENU_ mục",
+            "sZeroRecords":  "Không tìm thấy kết quả",
+            "sInfo":         "Hiển thị _START_ đến _END_ trong tổng số _TOTAL_ mục",
+            "sInfoEmpty":    "Hiển thị 0 đến 0 trong tổng số 0 mục",
+            "sInfoFiltered": "(được lọc từ _MAX_ mục)",
+            "sInfoPostFix":  "",
+            "sSearch":       "Tìm kiếm:",
+            "sUrl":          "",
+            "oPaginate": {
+                "sFirst":    "Đầu",
+                "sPrevious": "Trước",
+                "sNext":     "Tiếp",
+                "sLast":     "Cuối"
+            }
+        };
+        
+        var dom = '<"top"lf>rt<"bottom"ip>';
+        
+        $(tableId).DataTable({
+            data: parsedData,
+            columns: columns,
+            paging: true,
+            pageLength: pageLength,
+            lengthMenu: [
+                [10, 50, 100, 500, 1000, -1],
+                [10, 50, 100, 500, 1000, "Tất cả"]
+            ],
+            dom: dom,
+            language: language,
+            ...responsiveConfig
+        });
+        
+    } catch (error) {
+        console.error("Lỗi khi khởi tạo DataTable:", error);
+        console.error("Dữ liệu nhận được:", data);
+        
+        // Hiển thị bảng rỗng nếu có lỗi
+        $(tableId).html('<div class="alert alert-warning">Không có dữ liệu để hiển thị</div>');
+    }
+}
+
+function loadApproverRelationships() {
+    google.script.run
+        .withSuccessHandler(function(approverRelations) {
+            // Lưu danh sách nhân viên mà người dùng hiện tại phê duyệt
+            sessionStorage.setItem('approverFor', JSON.stringify(approverRelations));
+            console.log("Danh sách người được phê duyệt:", approverRelations);
+        })
+        .getApproverRelationships(currentUserEmail);
+}
+
+function showFullDescription(description) {
+    Swal.fire({
+        title: 'Chi tiết nội dung',
+        html: '<div style="text-align: left; padding: 10px; word-break: break-word;">' + description + '</div>',
+        showCloseButton: true,
+        showConfirmButton: false,
+        width: '600px'
+    });
+}
+
+function editLeaveData(id) {
+    var userEmail = $('#user-email').text();
+    
+    // Đảm bảo ID được định dạng đúng
+    console.log("ID ban đầu:", id, "Kiểu:", typeof id);
+    
+    // Chuyển đổi ID sang chuỗi và loại bỏ dấu nháy đơn nếu có
+    id = String(id).replace(/^['"]|['"]$/g, "").trim();
+    console.log("ID sau khi xử lý:", id);
+    
+    // Hiển thị UI trước
+    $('#editLeaveModal').modal('show');
+    
+    // Thiết lập vai trò người dùng hiện tại
+    $('#currentUserRole').val(currentUserRole);
+    
+    // Tìm dữ liệu từ DataTable trước (hiển thị nhanh)
+    var dataTable = $('#dataTable2').DataTable();
+    var rowData = null;
+    
+    dataTable.rows().every(function() {
+        var data = this.data();
+        var rowId = String(data[0]).replace(/^['"]|['"]$/g, "").trim();
+        if (rowId === id) {
+            rowData = data;
+            return false; // Dừng vòng lặp
+        }
+    });
+    
+    if (rowData) {
+        // Điền dữ liệu vào form từ DataTable
+        $('#editId').val(id);
+        $('#editName').val(rowData[1]);
+        $('#editEmail').val(rowData[2]);
+        $('#editDepartment').val(rowData[3]);
+        $('#editRole').val(rowData[4]);
+        
+        // Định dạng lại ngày thành yyyy-MM-dd cho input date
+        var startDate = rowData[5];
+        var endDate = rowData[6];
+        
+        // Chuyển đổi định dạng ngày từ dd/MM/yyyy sang yyyy-MM-dd
+        var startDateFormatted = convertDateFormat(startDate);
+        var endDateFormatted = convertDateFormat(endDate);
+        
+        // Thiết lập giá trị cho các trường ngày
+        var leaveType = rowData[7];
+        if (leaveType === 'Trong ngày') {
+            $('#editLeaveType').val(leaveType);
+            $('#editStartDate').val(startDateFormatted);
+            $('#editLeaveSession').val(rowData[8]);
+            
+            // Đảm bảo đặt thuộc tính required đúng cách
+            $('#editStartDate').prop('required', true);
+            $('#editStartDateRange').prop('required', false);
+            $('#editEndDate').prop('required', false);
+            
+            // Hiển thị/ẩn các section phù hợp
+            $('#editSingleDaySection').show();
+            $('#editDateRangeSection').hide();
+        } else if (leaveType === 'Từ ngày đến ngày') {
+            $('#editLeaveType').val(leaveType);
+            $('#editStartDateRange').val(startDateFormatted);
+            $('#editEndDate').val(endDateFormatted);
+            
+            // Đảm bảo đặt thuộc tính required đúng cách
+            $('#editStartDate').prop('required', false);
+            $('#editStartDateRange').prop('required', true);
+            $('#editEndDate').prop('required', true);
+            
+            // Hiển thị/ẩn các section phù hợp
+            $('#editSingleDaySection').hide();
+            $('#editDateRangeSection').show();
+        }
+
+        setTimeout(function() {
+            $('#editLeaveType').trigger('change');
+            calculateAndDisplayEditLeaveDays();
+        }, 100);
+        
+        $('#editReason').val(rowData[9]);
+        $('#editFile').val(rowData[10]);
+        $('#editLeaveType').trigger('change');
+        
+        // Hiển thị thông tin file
+        if (rowData[10]) {
+            var fileName = rowData[10].split('/').pop().split('?')[0];
+            $('#editFileDisplay').html('<a href="' + rowData[10] + '" target="_blank">' + fileName + '</a>');
+        } else {
+            $('#editFileDisplay').text('Không có tệp đính kèm');
+        }
+        
+        $('#editStatus').val(rowData[11]);
+        $('#editNote').val(rowData[12]);
+        
+        // Hiển thị thông tin phép năm
+        updateLeaveBalanceForEdit();
+        
+        // Tính toán số ngày nghỉ
+        calculateAndDisplayEditLeaveDays();
+        
+        // Hiện/ẩn các phần tử dựa trên quyền
+        var isApproverForThisUser = false;
+        // Kiểm tra nếu người hiện tại là NPD của người tạo đơn
+        var approverFor = JSON.parse(sessionStorage.getItem('approverFor') || '[]');
+        if (approverFor.includes(rowData[2])) {
+            isApproverForThisUser = true;
+        }
+        
+        if (isAdmin || isApproverForThisUser) {
+            $('#statusContainer').show();
+            $('#noteContainer').show();
+        } else {
+            $('#statusContainer').hide();
+            $('#noteContainer').hide();
+        }
+    }
+    
+    // Vẫn tiếp tục gọi server để lấy dữ liệu chính xác
+    google.script.run
+        .withSuccessHandler(function(data) {
+            if (data) {
+                console.log("Dữ liệu nhận từ server:", data);
+                
+                // Cập nhật lại form với dữ liệu từ server
+                $('#editId').val(data[0]);
+                $('#editName').val(data[1]);
+                $('#editEmail').val(data[2]);
+                $('#editDepartment').val(data[3]);
+                $('#editRole').val(data[4]);
+                
+                // Định dạng lại ngày
+                var startDateServer = convertDateFormat(data[5]);
+                var endDateServer = convertDateFormat(data[6]);
+                
+                // Thiết lập giá trị cho các trường ngày
+                var leaveTypeServer = data[7];
+                if (leaveTypeServer === 'Trong ngày') {
+                    $('#editLeaveType').val(leaveTypeServer);
+                    $('#editStartDate').val(startDateServer);
+                    $('#editLeaveSession').val(data[8]);
+                    
+                    // Hiển thị/ẩn các section phù hợp
+                    $('#editSingleDaySection').show();
+                    $('#editDateRangeSection').hide();
+                } else if (leaveTypeServer === 'Từ ngày đến ngày') {
+                    $('#editLeaveType').val(leaveTypeServer);
+                    $('#editStartDateRange').val(startDateServer);
+                    $('#editEndDate').val(endDateServer);
+                    
+                    // Hiển thị/ẩn các section phù hợp
+                    $('#editSingleDaySection').hide();
+                    $('#editDateRangeSection').show();
+                }
+                
+                $('#editReason').val(data[9]);
+                $('#editFile').val(data[10]);
+                
+                // Hiển thị thông tin file
+                if (data[10]) {
+                    var fileNameServer = data[10].split('/').pop().split('?')[0];
+                    $('#editFileDisplay').html('<a href="' + data[10] + '" target="_blank">' + fileNameServer + '</a>');
+                } else {
+                    $('#editFileDisplay').text('Không có tệp đính kèm');
+                }
+                
+                $('#editStatus').val(data[11]);
+                $('#editNote').val(data[12]);
+                
+                // Tính toán số ngày nghỉ
+                calculateAndDisplayEditLeaveDays();
+                
+                // Hiện/ẩn các phần tử dựa trên quyền
+                var isApproverForThisUser = false;
+                // Kiểm tra nếu người hiện tại là NPD của người tạo đơn
+                var approverFor = JSON.parse(sessionStorage.getItem('approverFor') || '[]');
+                if (approverFor.includes(data[2])) {
+                    isApproverForThisUser = true;
+                }
+                
+                if (isAdmin || isApproverForThisUser) {
+                    $('#statusContainer').show();
+                    $('#noteContainer').show();
+                } else {
+                    $('#statusContainer').hide();
+                    $('#noteContainer').hide();
+                }
+            }
+        })
+        .withFailureHandler(function(error) {
+            console.error("Lỗi khi lấy dữ liệu:", error);
+            setTimeout(function() {
+                $('#editLeaveModal').modal('hide');
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Lỗi!',
+                    text: 'Không thể lấy dữ liệu: ' + error
+                });
+            }, 500);
+        })
+        .getLeaveRequestById(id);
+}
+
+// Cập nhật số phép còn lại cho form sửa
+function updateLeaveBalanceForEdit() {
+    var leaveBalance = JSON.parse(sessionStorage.getItem('leaveBalance'));
+    
+    if (leaveBalance) {
+        $('#editModalUsedLeave').text(leaveBalance.used + ' ngày');
+        $('#editModalRemainingLeave').text(leaveBalance.remaining + ' ngày');
+        $('#editModalTotalLeave').text(leaveBalance.total + ' ngày');
+    } else {
+        updateLeaveBalanceDisplay();
+    }
+}
+
+function deleteLeaveData(id) {
+    var userEmail = $('#user-email').text();
+    
+    // Nhanh chóng kiểm tra quyền từ UI (có thể từ dữ liệu đã hiển thị)
+    var dataTable = $('#dataTable2').DataTable();
+    var rowData = dataTable.rows().data().toArray().find(row => row[0] == id);
+    
+    if (rowData && (rowData[2] === userEmail || isAdmin)) {
+        showDeleteConfirmation(id);
+    } else {
+        // Kiểm tra thêm từ server
+        google.script.run
+            .withSuccessHandler(function(data) {
+                if (data && (data[2] === userEmail || isAdmin)) {
+                    showDeleteConfirmation(id);
+                } else {
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Không được phép!',
+                        text: 'Chỉ Admin có quyền xóa đơn nghỉ phép này.'
+                    });
+                }
+            })
+            .withFailureHandler(function(error) {
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Lỗi!',
+                    text: 'Không thể kiểm tra quyền: ' + error
+                });
+            })
+            .getLeaveRequestById(id);
+    }
+}
+
+function showDeleteConfirmation(id) {
+    Swal.fire({
+        title: 'Xác nhận xóa đơn nghỉ phép',
+        text: 'Bạn có chắc chắn muốn xóa đơn nghỉ phép này không?',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Xóa',
+        cancelButtonText: 'Hủy',
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#3085d6'
+    }).then((result) => {
+        if (result.isConfirmed) {
+            // Vô hiệu hóa nút xóa để tránh nhấn nhiều lần
+            $('button[onclick="deleteLeaveData(\'' + id + '\')"]').prop('disabled', true);
+            
+            google.script.run
+                .withSuccessHandler((response) => {
+                    // Hiển thị thông báo thành công ngay lập tức
+                    showSuccessFlash(response, function() {
+                        // Thực hiện các tác vụ cập nhật dữ liệu sau
+                        loadPendingData();
+                        updateDataCounts();
+                        
+                        // Cập nhật số phép ở bước cuối cùng - đảm bảo làm mới từ server
+                        setTimeout(function() {
+                            forceUpdateLeaveBalance();
+                        }, 500);
+                    });
+                })
+                .withFailureHandler((error) => {
+                    // Khôi phục nút xóa nếu lỗi
+                    $('button[onclick="deleteLeaveData(\'' + id + '\')"]').prop('disabled', false);
+                    
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Lỗi!',
+                        text: error.message
+                    });
+                })
+                .deleteLeaveRequest(id);
+        }
+    });
+}
+
+document.addEventListener("DOMContentLoaded", function () {
+    const sidebarToggle = document.querySelector("#sidebar-toggle");
+    sidebarToggle.addEventListener("click", function () {
+        document.querySelector("#sidebar").classList.toggle("collapsed");
+    });
+
+    document.querySelector(".theme-toggle").addEventListener("click", () => {
+        toggleLocalStorage();
+        toggleRootClass();
+    });
+});
+
+function isHolidayFromList(dateStr) {
+    // Kiểm tra xem dateStr có trong mảng holidays không
+    if (!holidays || holidays.length === 0) return false;
+    
+    // Chuẩn hóa định dạng ngày
+    var dateParts = dateStr.split('/');
+    if (dateParts.length !== 3) return false;
+    
+    var normalizedDate = dateParts[0] + '/' + dateParts[1] + '/' + dateParts[2];
+    
+    // Kiểm tra trong danh sách ngày lễ
+    return holidays.includes(normalizedDate);
+}
+
+function toggleRootClass() {
+    const current = document.documentElement.getAttribute('data-bs-theme');
+    const inverted = current == 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-bs-theme', inverted);
+}
+
+function toggleLocalStorage() {
+    if (isLight()) {
+        localStorage.removeItem("light");
+    } else {
+        localStorage.setItem("light", "set");
+    }
+}
+
+function isLight() {
+    return localStorage.getItem("light");
+}
+
+function showContent(section) {
+    // Ẩn tất cả các section
+    var sections = document.getElementsByClassName('content-section');
+    for (var i = 0; i < sections.length; i++) {
+        sections[i].style.display = 'none';
+    }
+    
+    // Hiển thị section được chọn
+    document.getElementById(section).style.display = 'block';
+    
+    // Đặt lại hiển thị của tất cả các nút thêm mới - ẨN ban đầu
+    $('#addBtn').parent().hide();  // Nút "Thêm Đơn Nghỉ Phép"
+    $('[data-bs-target="#addUserModal"]').parent().hide();  // Nút "Thêm Người Dùng"
+    $('[data-bs-target="#addDepartmentModal"]').parent().hide();  // Nút "Thêm Phòng Ban"
+    $('[data-bs-target="#addRoleModal"]').parent().hide();  // Nút "Thêm Chức Vụ"
+    $('[data-bs-target="#addHolidayModal"]').parent().hide();  // Nút "Thêm Ngày Nghỉ Lễ"
+    
+    // Hiển thị lại nút tương ứng với section hiện tại
+    switch(section) {
+        case 'dataPending':
+            // Hiển thị lại nút "Thêm Đơn Nghỉ Phép" cho tất cả người dùng
+            $('#addBtn').parent().show();
+            break;
+            
+        case 'userData':
+            // Chỉ hiển thị nút "Thêm Người Dùng" nếu là Admin
+            if (isAdmin) {
+                $('[data-bs-target="#addUserModal"]').parent().show();
+            }
+            break;
+            
+        case 'dataDepartments':
+            // Chỉ hiển thị nút "Thêm Phòng Ban" nếu là Admin
+            if (isAdmin) {
+                $('[data-bs-target="#addDepartmentModal"]').parent().show();
+            }
+            break;
+            
+        case 'dataRoles':
+            // Chỉ hiển thị nút "Thêm Chức Vụ" nếu là Admin
+            if (isAdmin) {
+                $('[data-bs-target="#addRoleModal"]').parent().show();
+            }
+            break;
+            
+        case 'dataHolidays':
+            // Chỉ hiển thị nút "Thêm Ngày Nghỉ Lễ" nếu là Admin
+            if (isAdmin) {
+                $('[data-bs-target="#addHolidayModal"]').parent().show();
+            }
+            break;
+    }
+    
+    // Tải dữ liệu tương ứng
+    switch (section) {
+        case 'userData':
+            if (isAdmin) {
+                loadUserData();
+            }
+            break;
+        case 'dataPending':
+            loadPendingData();
+            break;
+        case 'dataApproved':
+            loadApprovedData();
+            break;
+        case 'dataDisapproved':
+            loadDisapprovedData();
+            break;
+        case 'dataDepartments':
+            loadDepartments();
+            break;
+        case 'dataRoles':
+            loadRoles();
+            break;
+        case 'dataHolidays':
+            loadHolidays();
+            break;
+        default:
+            break;
+    }
+}
+
+// Hàm hiển thị Dashboard
+function showDashboard() {
+    // Ẩn tất cả các section
+    var sections = document.getElementsByClassName('content-section');
+    for (var i = 0; i < sections.length; i++) {
+        sections[i].style.display = 'none';
+    }
+    
+    // Hiển thị dashboard
+    document.getElementById('dashboard').style.display = 'block';
+    
+    // Cập nhật biểu đồ
+    updateDataCounts();
+    loadStatsByDepartment();
+    loadStatsByMonth();
+}
+
+// Cập nhật biểu đồ trạng thái
+function updateStatusChart(data) {
+    var ctx = document.getElementById('statusChart');
+    
+    // Nếu biểu đồ đã tồn tại, cập nhật dữ liệu
+    if (statusChart) {
+        statusChart.data.datasets[0].data = [data.pending, data.approved, data.disapproved];
+        statusChart.update();
+        return;
+    }
+    
+    // Tạo biểu đồ mới
+    statusChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Đang xử lý', 'Phê duyệt', 'Huỷ bỏ'],
+            datasets: [{
+                data: [data.pending, data.approved, data.disapproved],
+                backgroundColor: [
+                    '#ffc107', // warning - yellow for pending
+                    '#28a745', // success - green for approved
+                    '#dc3545'  // danger - red for disapproved
+                ],
+                borderWidth: 0,
+                hoverOffset: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            cutout: '70%',
+            plugins: {
+                legend: {
+                    display: false
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            var label = context.label || '';
+                            var value = context.raw || 0;
+                            var total = context.dataset.data.reduce((a, b) => a + b, 0);
+                            var percentage = Math.round((value / total) * 100);
+                            return label + ': ' + value + ' (' + percentage + '%)';
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+function updateDepartmentChart(data) {
+  var ctx = document.getElementById('departmentChart');
+  
+  // Nếu biểu đồ đã tồn tại, hủy nó
+  if (departmentChart) {
+    departmentChart.destroy();
+  }
+  
+  // Kiểm tra nếu không có dữ liệu
+  if (!data || data.length === 0) {
+    $(ctx).parent().html('<div class="alert alert-info m-3">Không có dữ liệu để hiển thị</div>');
+    return;
+  }
+  
+  // Chuẩn bị dữ liệu
+  var labels = data.map(item => item.department);
+  var pendingValues = data.map(item => item.pending);
+  var approvedValues = data.map(item => item.approved);
+  var disapprovedValues = data.map(item => item.disapproved);
+  
+  // Tạo gradient cho các loại trạng thái
+  var ctx2d = ctx.getContext('2d');
+  
+  // Gradient cho đang xử lý
+  var pendingGradient = ctx2d.createLinearGradient(0, 0, 0, 400);
+  pendingGradient.addColorStop(0, 'rgba(255, 193, 7, 0.8)');
+  pendingGradient.addColorStop(1, 'rgba(255, 193, 7, 0.3)');
+  
+  // Gradient cho phê duyệt
+  var approvedGradient = ctx2d.createLinearGradient(0, 0, 0, 400);
+  approvedGradient.addColorStop(0, 'rgba(40, 167, 69, 0.8)');
+  approvedGradient.addColorStop(1, 'rgba(40, 167, 69, 0.3)');
+  
+  // Gradient cho huỷ bỏ
+  var disapprovedGradient = ctx2d.createLinearGradient(0, 0, 0, 400);
+  disapprovedGradient.addColorStop(0, 'rgba(220, 53, 69, 0.8)');
+  disapprovedGradient.addColorStop(1, 'rgba(220, 53, 69, 0.3)');
+  
+  // Tạo biểu đồ mới kiểu stacked bar
+  departmentChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: 'Đang xử lý',
+          data: pendingValues,
+          backgroundColor: pendingGradient,
+          borderColor: 'rgba(255, 193, 7, 1)',
+          borderWidth: 1,
+          borderRadius: 4,
+          barPercentage: 0.4,    // Giảm chiều rộng của cột
+          categoryPercentage: 0.6 // Giảm khoảng cách giữa các nhóm
+        },
+        {
+          label: 'Phê duyệt',
+          data: approvedValues,
+          backgroundColor: approvedGradient,
+          borderColor: 'rgba(40, 167, 69, 1)',
+          borderWidth: 1,
+          borderRadius: 4,
+          barPercentage: 0.4,
+          categoryPercentage: 0.6
+        },
+        {
+          label: 'Huỷ bỏ',
+          data: disapprovedValues,
+          backgroundColor: disapprovedGradient,
+          borderColor: 'rgba(220, 53, 69, 1)',
+          borderWidth: 1,
+          borderRadius: 4,
+          barPercentage: 0.4,
+          categoryPercentage: 0.6
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: {
+          stacked: true,
+          grid: {
+            display: false
+          },
+          ticks: {
+            color: 'rgba(255, 255, 255, 0.7)',
+            font: {
+              size: 11
+            }
+          }
+        },
+        y: {
+          stacked: true,
+          beginAtZero: true,
+          grid: {
+            color: 'rgba(255, 255, 255, 0.05)'
+          },
+          ticks: {
+            color: 'rgba(255, 255, 255, 0.7)',
+            font: {
+              size: 10
+            },
+            padding: 5
+          }
+        }
+      },
+      plugins: {
+        tooltip: {
+          mode: 'index',
+          intersect: false,
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          padding: 8,
+          cornerRadius: 4,
+          callbacks: {
+            footer: function(tooltipItems) {
+              var sum = 0;
+              tooltipItems.forEach(function(tooltipItem) {
+                sum += tooltipItem.parsed.y;
+              });
+              return 'Tổng: ' + sum.toFixed(1) + ' ngày';
+            }
+          }
+        },
+        legend: {
+          display: true,
+          position: 'top',
+          align: 'start',
+          labels: {
+            color: 'rgba(255, 255, 255, 0.7)',
+            boxWidth: 12,
+            padding: 10,
+            font: {
+              size: 11
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+// Cập nhật hàm updateMonthlyChart để hiển thị thông báo khi không có dữ liệu
+function updateMonthlyChart(data) {
+  var ctx = document.getElementById('monthlyChart');
+  
+  // Nếu biểu đồ đã tồn tại, hủy nó
+  if (monthlyChart) {
+    monthlyChart.destroy();
+  }
+  
+  // Kiểm tra nếu không có dữ liệu
+  if (!data || data.length === 0) {
+    $(ctx).parent().html('<div class="alert alert-info m-3">Không có dữ liệu để hiển thị</div>');
+    return;
+  }
+  
+  // Chuẩn bị dữ liệu
+  var labels = data.map(item => item.month);
+  var pendingValues = data.map(item => item.pending);
+  var approvedValues = data.map(item => item.approved);
+  var disapprovedValues = data.map(item => item.disapproved);
+  
+  // Tạo gradient cho background
+  var ctx2d = ctx.getContext('2d');
+  
+  // Gradient cho đang xử lý
+  var pendingFill = ctx2d.createLinearGradient(0, 0, 0, 300);
+  pendingFill.addColorStop(0, 'rgba(255, 193, 7, 0.2)');
+  pendingFill.addColorStop(1, 'rgba(255, 193, 7, 0.01)');
+  
+  // Gradient cho phê duyệt
+  var approvedFill = ctx2d.createLinearGradient(0, 0, 0, 300);
+  approvedFill.addColorStop(0, 'rgba(40, 167, 69, 0.2)');
+  approvedFill.addColorStop(1, 'rgba(40, 167, 69, 0.01)');
+  
+  // Gradient cho huỷ bỏ
+  var disapprovedFill = ctx2d.createLinearGradient(0, 0, 0, 300);
+  disapprovedFill.addColorStop(0, 'rgba(220, 53, 69, 0.2)');
+  disapprovedFill.addColorStop(1, 'rgba(220, 53, 69, 0.01)');
+  
+  // Tạo biểu đồ mới kiểu area chart
+  monthlyChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: 'Đang xử lý',
+          data: pendingValues,
+          fill: true,
+          backgroundColor: pendingFill,
+          borderColor: 'rgba(255, 193, 7, 0.8)',
+          tension: 0.4,
+          pointBackgroundColor: 'rgba(255, 193, 7, 1)',
+          pointBorderColor: '#fff',
+          pointRadius: 4,
+          pointHoverRadius: 6,
+          borderWidth: 2
+        },
+        {
+          label: 'Phê duyệt',
+          data: approvedValues,
+          fill: true,
+          backgroundColor: approvedFill,
+          borderColor: 'rgba(40, 167, 69, 0.8)',
+          tension: 0.4,
+          pointBackgroundColor: 'rgba(40, 167, 69, 1)',
+          pointBorderColor: '#fff',
+          pointRadius: 4,
+          pointHoverRadius: 6,
+          borderWidth: 2
+        },
+        {
+          label: 'Huỷ bỏ',
+          data: disapprovedValues,
+          fill: true,
+          backgroundColor: disapprovedFill,
+          borderColor: 'rgba(220, 53, 69, 0.8)',
+          tension: 0.4,
+          pointBackgroundColor: 'rgba(220, 53, 69, 1)',
+          pointBorderColor: '#fff',
+          pointRadius: 4,
+          pointHoverRadius: 6,
+          borderWidth: 2
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: {
+          grid: {
+            display: false
+          },
+          ticks: {
+            color: 'rgba(255, 255, 255, 0.7)',
+            font: {
+              size: 10
+            }
+          }
+        },
+        y: {
+          beginAtZero: true,
+          grid: {
+            color: 'rgba(255, 255, 255, 0.05)'
+          },
+          ticks: {
+            color: 'rgba(255, 255, 255, 0.7)',
+            padding: 5,
+            font: {
+              size: 10
+            }
+          }
+        }
+      },
+      plugins: {
+        tooltip: {
+          mode: 'index',
+          intersect: false,
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          padding: 8,
+          cornerRadius: 4,
+          callbacks: {
+            footer: function(tooltipItems) {
+              var sum = 0;
+              tooltipItems.forEach(function(tooltipItem) {
+                sum += tooltipItem.parsed.y;
+              });
+              return 'Tổng: ' + sum.toFixed(1) + ' ngày';
+            }
+          }
+        },
+        legend: {
+          display: true,
+          position: 'top',
+          align: 'start',
+          labels: {
+            color: 'rgba(255, 255, 255, 0.7)',
+            boxWidth: 12,
+            padding: 10,
+            font: {
+              size: 11
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+
+// Sửa hàm updateDataCounts
+function updateDataCounts() {
+    // Các phần khác giữ nguyên
+    google.script.run
+        .withSuccessHandler(function(data) {
+            // Cập nhật text
+            $('#totalData').text(data.total);
+            $('#pendingCount').text(data.pending);
+            $('#approvedCount').text(data.approved);
+            $('#disapprovedCount').text(data.disapproved);
+            
+            // Cập nhật biểu đồ
+            updateStatusChart(data);
+        })
+        .withFailureHandler(function(error) {
+            console.error('Không thể lấy dữ liệu đếm:', error);
+        })
+        .getTotalDataCounts(currentUserEmail, currentUserRole);
+}
+
+function startPolling() {
+    updateDataCounts();
+    setInterval(updateDataCounts, 30000); // Cập nhật mỗi 30 giây
+}
+
+startPolling();
+
+// Thiết lập ngày mặc định là hôm nay cho các trường ngày
+function setDefaultDates() {
+    var today = new Date().toISOString().split('T')[0];
+    $('#startDate').val(today);
+    $('#startDateRange').val(today);
+    $('#endDate').val(today);
+}
+
+// Thêm vào js.html - Hàm kiểm tra tệp đính kèm
+function validateFileUpload() {
+    var fileInput = document.getElementById('fileInput');
+    
+    // Xóa thông báo lỗi cũ
+    $('#fileError').remove();
+    
+    if (fileInput.files.length > 0) {
+        var file = fileInput.files[0];
+        var fileName = file.name;
+        var fileSize = file.size;
+        var fileType = file.type;
+        
+        // Kiểm tra kích thước file (5MB)
+        var maxSize = 5 * 1024 * 1024;
+        if (fileSize > maxSize) {
+            $(fileInput).addClass('is-invalid');
+            $('<div id="fileError" class="invalid-feedback">File quá lớn. Kích thước tối đa là 5MB.</div>')
+                .insertAfter(fileInput);
+            return false;
+        }
+        
+        // Kiểm tra định dạng file
+        var validTypes = [
+            'application/pdf', 
+            'image/jpeg', 
+            'image/png', 
+            'image/gif',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'application/msword',
+            'application/vnd.ms-excel',
+            'application/vnd.ms-powerpoint'
+        ];
+        
+        var isValidType = false;
+        for (var i = 0; i < validTypes.length; i++) {
+            if (fileType.startsWith(validTypes[i].split('/')[0] + '/') || fileType === validTypes[i]) {
+                isValidType = true;
+                break;
+            }
+        }
+        
+        if (!isValidType) {
+            $(fileInput).addClass('is-invalid');
+            $('<div id="fileError" class="invalid-feedback">Định dạng file không hợp lệ. Chỉ chấp nhận PDF, hình ảnh, Word, Excel.</div>')
+                .insertAfter(fileInput);
+            return false;
+        }
+        
+        $(fileInput).removeClass('is-invalid').addClass('is-valid');
+        return true;
+    }
+    
+    // Không có file, coi như hợp lệ
+    $(fileInput).removeClass('is-invalid');
+    return true;
+}
+
+// Thêm sự kiện cho input file
+$(document).ready(function() {
+    $('#fileInput').on('change', validateFileUpload);
+    
+    $('#clearFileBtn').click(function() {
+      $('#fileInput').val('').removeClass('is-valid is-invalid');
+      $('#fileError').remove();
+      $('#fileInfo').addClass('d-none').find('span').text('');
+    });
+   
+    $('#fileInput').change(function() {
+      if (this.files.length > 0) {
+         var fileName = this.files[0].name;
+         var fileSize = (this.files[0].size / 1024).toFixed(2) + ' KB';
+         $('#fileInfo').removeClass('d-none').find('span').text(fileName + ' (' + fileSize + ')');
+      } else {
+         $('#fileInfo').addClass('d-none').find('span').text('');
+      }
+    });
+});
+
+// Khởi tạo modal thêm đơn nghỉ phép
+var addLeaveModal = document.getElementById('addLeaveModal');
+if (addLeaveModal) {
+    addLeaveModal.addEventListener('shown.bs.modal', function () {
+        // Điền thông tin người dùng vào form
+        $('#name').val($('#user-name').text());
+        $('#email').val($('#user-email').text());
+        $('#department').val($('#user-department').text());
+        $('#role').val($('#user-role').text());
+        
+        // Thiết lập ngày mặc định
+        setDefaultDates();
+        
+        // Cập nhật thông tin phép năm trong modal
+        var leaveBalance = JSON.parse(sessionStorage.getItem('leaveBalance'));
+        if (leaveBalance) {
+            $('#modalUsedLeave').text(leaveBalance.used + ' ngày');
+            $('#modalRemainingLeave').text(leaveBalance.remaining + ' ngày');
+            $('#modalTotalLeave').text(leaveBalance.total + ' ngày');
+        } else {
+            updateLeaveBalanceDisplay();
+        }
+        
+        // Thiết lập mặc định cho loại nghỉ
+        $('#leaveType').val('');
+        $('#singleDaySection').hide();
+        $('#dateRangeSection').hide();
+        $('#leaveDaysCalculated').hide();
+    });
+}
+
+// Hàm xem trước tệp
+function previewFile(fileUrl, fileType) {
+    // Thiết lập nút truy cập file
+    $('#fileDownloadBtn').attr('href', fileUrl);
+    
+    // Hiển thị modal
+    $('#filePreviewModal').modal('show');
+    
+    // Lấy tên tệp từ URL
+    var fileName = fileUrl.split('/').pop().split('?')[0];
+    
+    // Hiển thị tên tệp ở cả title và trong phần body
+    $('#filePreviewModalLabel').text('Xem trước');
+    $('#fileNameDisplay').text(fileName);
+    
+    // Ẩn tất cả các phần tử preview và hiển thị loading
+    $('#filePreviewContent').show();
+    $('#filePreviewFrame').hide();
+    $('#filePreviewImage').addClass('d-none');
+    $('.preview-controls').hide();
+    
+    // Lấy file ID từ Google Drive URL
+    var fileId = extractFileIdFromUrl(fileUrl);
+    
+    if (!fileId) {
+        $('#filePreviewContent').html('<div class="alert alert-danger">Không thể xác định ID tệp</div>');
+        return;
+    }
+    
+    // Kiểm tra nếu là hình ảnh
+    if (fileName.match(/\.(jpeg|jpg|gif|png)$/i)) {
+        // Nếu là hình ảnh, hiển thị trực tiếp
+        var img = new Image();
+        img.onload = function() {
+            $('#filePreviewContent').hide();
+            $('#filePreviewImage').attr('src', fileUrl).removeClass('d-none');
+            $('.preview-controls').show();
+            
+            // Khởi tạo zoom level
+            $('#filePreviewImage').data('zoom', 1);
+        };
+        img.onerror = function() {
+            $('#filePreviewContent').html('<div class="alert alert-danger">Không thể tải hình ảnh</div>');
+        };
+        img.src = fileUrl;
+    } else {
+        // Tạo URL xem trước dựa trên ID
+        var previewUrl = 'https://drive.google.com/file/d/' + fileId + '/preview';
+        
+        // Hiển thị iframe với URL xem trước
+        $('#filePreviewFrame').attr('src', previewUrl);
+        
+        // Kiểm tra khi iframe đã tải xong
+        $('#filePreviewFrame').on('load', function() {
+            $('#filePreviewContent').hide();
+            $('#filePreviewFrame').show();
+        });
+        
+        // Nếu iframe không tải được sau 5 giây, hiển thị thông báo lỗi
+        setTimeout(function() {
+            if ($('#filePreviewContent').is(':visible')) {
+                $('#filePreviewContent').html('<div class="alert alert-warning">' +
+                    'Vui lòng chờ hoặc truy cập file để xem.' +
+                    '</div>');
+            }
+        }, 5000);
+    }
+}
+
+// Hàm trích xuất ID tệp từ URL Drive
+function extractFileIdFromUrl(url) {
+    // Xử lý các định dạng URL của Google Drive
+    var patterns = [
+        /\/d\/([a-zA-Z0-9_-]{25,})/,            // /d/{fileId} format
+        /id=([a-zA-Z0-9_-]{25,})/,              // id={fileId} format
+        /\/file\/d\/([a-zA-Z0-9_-]{25,})/,      // /file/d/{fileId} format
+        /folders\/([a-zA-Z0-9_-]{25,})/         // folders/{folderId} format
+    ];
+    
+    for (var i = 0; i < patterns.length; i++) {
+        var match = url.match(patterns[i]);
+        if (match && match[1]) {
+            return match[1];
+        }
+    }
+    
+    return null;
+}
+
+// Thêm khả năng phóng to, thu nhỏ cho hình ảnh
+$(document).ready(function() {
+    $('#zoomInBtn').click(function() {
+        var img = $('#filePreviewImage');
+        var currentZoom = img.data('zoom') || 1;
+        var newZoom = Math.min(currentZoom + 0.1, 2); // Tối đa zoom 2x
+        img.css('transform', 'scale(' + newZoom + ')');
+        img.data('zoom', newZoom);
+    });
+    
+    $('#zoomOutBtn').click(function() {
+        var img = $('#filePreviewImage');
+        var currentZoom = img.data('zoom') || 1;
+        var newZoom = Math.max(currentZoom - 0.1, 0.5); // Tối thiểu zoom 0.5x
+        img.css('transform', 'scale(' + newZoom + ')');
+        img.data('zoom', newZoom);
+    });
+    
+    // Reset zoom khi đóng modal
+    $('#filePreviewModal').on('hidden.bs.modal', function () {
+        $('#filePreviewFrame').attr('src', '');
+        $('#filePreviewImage').attr('src', '').addClass('d-none').css('transform', 'scale(1)').data('zoom', 1);
+    });
+});
+
+function forceUpdateLeaveBalance(callback) {
+    var email = $('#user-email').text();
+    if (!email) {
+        if (typeof callback === 'function') callback();
+        return;
+    }
+    
+    // Thêm hiệu ứng loading cho phần thông tin phép
+    $('#sidebarLeaveInfo').addClass('updating');
+    
+    google.script.run
+        .withSuccessHandler(function(leaveBalance) {
+            // Cập nhật session storage
+            sessionStorage.setItem('leaveBalance', JSON.stringify(leaveBalance));
+            
+            // Cập nhật trên sidebar
+            $('#leaveTotalLeave').text(leaveBalance.total);
+            $('#leaveDaysRemaining').text(leaveBalance.remainingCurrentYear);
+            $('#leaveCurrentYearUsed').text(leaveBalance.used);
+            
+            // Cập nhật phép năm trước - LUÔN HIỂN THỊ kể cả giá trị bằng 0
+            $('#previousYearLeaveSection').show(); // Luôn hiển thị, không ẩn
+            $('#leaveDaysRemainingPrevious').text(leaveBalance.remainingPreviousYear);
+            $('#leavePreviousYearTotal').text(leaveBalance.previousYear);
+            
+            if (leaveBalance.canUsePreviousYear) {
+                $('#previousYearExpiryNotice').text('Sử dụng đến hết ' + leaveBalance.previousYearExpiry);
+                $('#previousYearExpiryNotice').removeClass('text-danger').addClass('text-warning');
+            } else {
+                $('#previousYearExpiryNotice').html('Hạn sử dụng: <strong>' + leaveBalance.previousYearExpiry + '</strong>');
+                $('#previousYearExpiryNotice').removeClass('text-warning').addClass('text-info');
+            }
+            
+            // Cập nhật tổng số ngày đã dùng và còn lại
+            $('#leaveDaysUsed').text(leaveBalance.used + leaveBalance.usedPreviousYear);
+            $('#leaveDaysRemainingTotal').text(leaveBalance.remaining);
+            
+            // Cập nhật thanh progress
+            var percentage = Math.min(100, Math.round(((leaveBalance.used + leaveBalance.usedPreviousYear) / (leaveBalance.total + leaveBalance.previousYear)) * 100));
+            $('#leaveProgressBar').css('width', percentage + '%');
+            
+            // Hiệu ứng thành công
+            $('#sidebarLeaveInfo').removeClass('updating').addClass('success-flash-strong');
+            setTimeout(function() {
+                $('#sidebarLeaveInfo').removeClass('success-flash-strong');
+            }, 2000);
+            
+            // Cập nhật dữ liệu trong các form thêm/sửa
+            updateFormLeaveBalance(leaveBalance);
+            
+            // Gọi callback nếu có
+            if (typeof callback === 'function') {
+                setTimeout(callback, 200);
+            }
+        })
+        .withFailureHandler(function(error) {
+            console.error("Lỗi khi cập nhật thông tin phép:", error);
+            $('#sidebarLeaveInfo').removeClass('updating');
+            // Vẫn gọi callback dù bị lỗi
+            if (typeof callback === 'function') callback();
+        })
+        .calculateLeaveBalance(email);
+}
+
+function updateFormLeaveBalance(leaveBalance) {
+    // Cập nhật trong form thêm mới
+    $('#modalUsedLeave').text(leaveBalance.used + ' ngày');
+    $('#modalRemainingLeave').text(leaveBalance.remaining + ' ngày');
+    $('#modalTotalLeave').text(leaveBalance.total + ' ngày');
+    
+    // Cập nhật trong form sửa
+    $('#editModalUsedLeave').text(leaveBalance.used + ' ngày');
+    $('#editModalRemainingLeave').text(leaveBalance.remaining + ' ngày');
+    $('#editModalTotalLeave').text(leaveBalance.total + ' ngày');
+    
+    // Cập nhật UI khi đã tính toán số ngày nghỉ
+    calculateAndDisplayLeaveDays();
+    calculateAndDisplayEditLeaveDays();
+}
+
+// Hàm chuyển đơn về trạng thái "Đang xử lý"
+function moveBackToPending(id, status) {
+    var sheetName = status === 'approved' ? 'Phê duyệt' : 'Huỷ bỏ';
+    
+    Swal.fire({
+        title: 'Xác nhận chuyển về',
+        text: 'Bạn có chắc chắn muốn chuyển đơn này trở lại trạng thái "Đang xử lý"?',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#3085d6',
+        cancelButtonColor: '#d33',
+        confirmButtonText: 'Đồng ý',
+        cancelButtonText: 'Huỷ'
+    }).then((result) => {
+        if (result.isConfirmed) {
+            google.script.run
+                .withSuccessHandler(function(response) {
+                    if (response.success) {
+                        // Hiển thị thông báo thành công ngay lập tức
+                        showSuccessFlash(response.message, function() {
+                            // Làm mới tất cả dữ liệu sau đó
+                            loadPendingData();
+                            loadApprovedData();
+                            loadDisapprovedData();
+                            updateDataCounts();
+                            
+                            // Cập nhật số phép ở bước cuối cùng
+                            forceUpdateLeaveBalance();
+                        });
+                    } else {
+                        Swal.fire({
+                            icon: 'error',
+                            title: 'Lỗi!',
+                            text: response.message || 'Không thể chuyển đơn. Vui lòng thử lại sau.'
+                        });
+                    }
+                })
+                .withFailureHandler(function(error) {
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Lỗi!',
+                        text: error.message || 'Không thể chuyển đơn. Vui lòng thử lại sau.'
+                    });
+                })
+                .moveDataToPending(id, sheetName);
+        }
+    });
+}
+
+$('#addUserModal').on('shown.bs.modal', function() {
+  // Re-initialize Select2 với parent cụ thể
+  $('#userDepartment').select2({
+    placeholder: "Chọn phòng ban",
+    allowClear: true,
+    width: '100%',
+    dropdownParent: $('#addUserModal')
+  });
+  
+  $('#userRole').select2({
+    placeholder: "Chọn chức vụ",
+    allowClear: true,
+    width: '100%',
+    dropdownParent: $('#addUserModal')
+  });
+  
+  $('#userApproverEmail').select2({
+    placeholder: "Chọn người phê duyệt",
+    allowClear: true,
+    width: '100%',
+    dropdownParent: $('#addUserModal')
+  });
+  
+  // Cập nhật dữ liệu mới nhất cho các dropdown
+  updateDepartmentDropdowns();
+  updateRoleDropdowns();
+  loadApprovers();
+});
+
+function showSettings() {
+  // Kiểm tra quyền admin
+  if (currentUserRole !== 'admin') {
+    Swal.fire({
+      icon: 'error',
+      title: 'Không có quyền',
+      text: 'Bạn không có quyền truy cập phần cài đặt này. Chỉ Admin mới có quyền thực hiện.'
+    });
+    return;
+  }
+  
+  // Lấy giá trị cài đặt hiện tại
+  loadSettings();
+  $('#settingsModal').modal('show');
+}
+
+// Tải cài đặt hiện tại
+function loadSettings() {
+  google.script.run
+    .withSuccessHandler(function(expiryDate) {
+      // Chuyển đổi từ dd/MM/yyyy sang yyyy-MM-dd cho input date
+      if (expiryDate.includes('/')) {
+        var parts = expiryDate.split('/');
+        if (parts.length === 3) {
+          var formattedDate = parts[2] + '-' + parts[1] + '-' + parts[0];
+          $('#expiryDate').val(formattedDate);
+        }
+      } else {
+        $('#expiryDate').val(expiryDate);
+      }
+    })
+    .getPreviousYearLeaveExpiryDate();
+}
+
+// Lưu cài đặt
+$('#settingsForm').submit(function(event) {
+  event.preventDefault();
+  
+  var expiryDateValue = $('#expiryDate').val();
+  if (!expiryDateValue) {
+    Swal.fire({
+      icon: 'error',
+      title: 'Lỗi',
+      text: 'Vui lòng chọn ngày hết hạn phép năm trước!'
+    });
+    return;
+  }
+  
+  // Chuyển đổi từ yyyy-MM-dd sang dd/MM/yyyy
+  var parts = expiryDateValue.split('-');
+  var formattedDate = parts[2] + '/' + parts[1] + '/' + parts[0];
+  
+  var submitButton = $(this).find('button[type="submit"]');
+  submitButton.prop('disabled', true);
+  submitButton.html('<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Đang lưu...');
+  
+  google.script.run
+    .withSuccessHandler(function(response) {
+      submitButton.prop('disabled', false);
+      submitButton.html('Lưu thay đổi');
+      $('#settingsModal').modal('hide');
+      
+      showSuccessFlash(response, function() {
+        // Cập nhật lại các dữ liệu phép
+        forceUpdateLeaveBalance();
+      });
+    })
+    .withFailureHandler(function(error) {
+      submitButton.prop('disabled', false);
+      submitButton.html('Lưu thay đổi');
+      
+      Swal.fire({
+        icon: 'error',
+        title: 'Lỗi!',
+        text: error.message || 'Không thể cập nhật cài đặt. Vui lòng thử lại sau.'
+      });
+    })
+    .updatePreviousYearLeaveExpiryDate(formattedDate);
+});
+
+// Đặt lại ngày hết hạn về 31/03 năm hiện tại
+$('#resetExpiryDateBtn').click(function() {
+  var currentYear = new Date().getFullYear();
+  var defaultDate = currentYear + '-03-31';
+  $('#expiryDate').val(defaultDate);
+});
+</script>
